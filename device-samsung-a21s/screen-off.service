@@ -1,0 +1,11 @@
+[Unit]
+Description=Turn off screen to save power
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/screen-off
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

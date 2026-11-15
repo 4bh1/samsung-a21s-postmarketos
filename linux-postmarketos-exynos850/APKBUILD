@@ -1,0 +1,83 @@
+# Kernel config based on: arch/arm64/configs/exynos850_defconfig
+maintainer="Thomas Turner <tturner@lineageos.org>"
+pkgname=linux-postmarketos-exynos850
+pkgver=7.2.0
+pkgrel=6
+pkgdesc="Mainline kernel fork for Exynos850"
+arch="aarch64"
+_carch="arm64"
+_flavor="postmarketos-exynos850"
+url="https://github.com/samsungexynos850/linux"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+	pmb:kconfigcheck-nftables
+"
+makedepends="
+	android-tools-mkdtboimg
+	bash
+	bc
+	bison
+	clang
+	elfutils-dev
+	findutils
+	flex
+	linux-headers
+	lld
+	llvm
+	openssl-dev
+	pahole
+	perl
+	postmarketos-installkernel
+	python3
+"
+
+_repository="linux"
+_commit="8be82eacf2ea237e8a3d06d4f5b1bf6554571322"
+_config="config-$_flavor.$arch"
+
+# Source
+source="
+	linux-$_commit.tar.gz::https://github.com/samsungexynos850/$_repository/archive/$_commit.tar.gz
+	$_config
+	0001-dwc3-force-gadget-softconnect.patch
+"
+builddir="$srcdir/linux-$_commit"
+
+prepare() {
+	default_prepare
+	cp "$srcdir/$_config" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1))-postmarketOS"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot
+
+	for ram in 3gb 4gb 6gb; do
+		mv arch/arm64/boot/dts/exynos/exynos850-a217f-"${ram}".dtb dtb
+		mkdtboimg create arch/arm64/boot/dts/exynos/exynos850-a217f-"${ram}".dtb dtb --custom1=0xff
+	done
+
+	make install modules_install dtbs_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 \
+		INSTALL_DTBS_PATH="$pkgdir"/boot/dtbs
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+
+	install -Dm644 "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+
+sha512sums="
+e9d88f23d0b9caba0fb6912099bec3f1a451e8572d9bc288b94c1c08df9433bcd4c4db2b950d0ca63fb9ed399797288f553cd9e313ec822c791281b185efb9e3  linux-8be82eacf2ea237e8a3d06d4f5b1bf6554571322.tar.gz
+3a8a4fe4a6136aef54ec959db6b7bc717fb07067c96c64b7bacf58bfccc1bf18b50fa21283549b201ba0464e02285f186d723717af16ba84293dec4446eb3a3e  config-postmarketos-exynos850.aarch64
+3a5980a5ca582906aa265b08e33a7c1cebf3f10fcd5a74db7557e04d63cc8dd509803ffe16be8ba7fdb58dccc3bf1112ab137fa00a90c227271760eb04d40606  0001-dwc3-force-gadget-softconnect.patch
+"

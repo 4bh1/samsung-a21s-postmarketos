@@ -1,0 +1,309 @@
+diff --git a/arch/arm64/boot/dts/exynos/exynos850-a217f-common.dtsi b/arch/arm64/boot/dts/exynos/exynos850-a217f-common.dtsi
+index 86db889f3..041ef88e1 100644
+--- a/arch/arm64/boot/dts/exynos/exynos850-a217f-common.dtsi
++++ b/arch/arm64/boot/dts/exynos/exynos850-a217f-common.dtsi
+@@ -228,3 +228,29 @@ touchscreen@0 {
+ 		vdd-supply = <&reg_lcd_vddi>;
+ 	};
+ };
++
++&i2c_0 {
++	status = "okay";
++	samsung,i2c-sda-delay = <100>;
++	samsung,i2c-slave-addr = <0>;
++	samsung,i2c-max-bus-freq = <100000>;
++
++	s2mu106_muic_0: muic@3e {
++		compatible = "samsung,s2mu106-muic";
++		reg = <0x3e>;
++	};
++};
++
++&usi_hsi2c_0 {
++	status = "okay";
++};
++
++&hsi2c_0 {
++	status = "okay";
++	clock-frequency = <100000>;
++
++	s2mu106_muic_hsi2c: muic@3e {
++		compatible = "samsung,s2mu106-muic";
++		reg = <0x3e>;
++	};
++};
+diff --git a/drivers/phy/samsung/phy-exynos5-usbdrd.c b/drivers/phy/samsung/phy-exynos5-usbdrd.c
+index 8711a3b62..29e835cb2 100644
+--- a/drivers/phy/samsung/phy-exynos5-usbdrd.c
++++ b/drivers/phy/samsung/phy-exynos5-usbdrd.c
+@@ -12,6 +12,7 @@
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/io.h>
++#include <linux/i2c.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+@@ -1624,26 +1625,64 @@ static void exynos850_usbdrd_utmi_init(struct exynos5_usbdrd_phy *phy_drd)
+ 		exynos5_usbdrd_usb_v3p1_pipe_override(phy_drd);
+ }
+ 
+-static int exynos850_usbdrd_phy_init(struct phy *phy)
++static struct i2c_client *s2mu106_muic_client;
++
++static void s2mu106_switch_to_usb(struct i2c_client *client)
+ {
+-	struct phy_usb_instance *inst = phy_get_drvdata(phy);
+-	struct exynos5_usbdrd_phy *phy_drd = to_usbdrd_phy(inst);
+-	int ret;
++	int ret, val;
+ 
+-	ret = clk_bulk_prepare_enable(phy_drd->drv_data->n_clks, phy_drd->clks);
+-	if (ret)
+-		return ret;
++	if (!client)
++		return;
+ 
+-	/* UTMI or PIPE3 specific init */
+-	scoped_guard(mutex, &phy_drd->phy_mutex)
+-		inst->phy_cfg->phy_init(phy_drd);
++	/* 1. Clear SWITCH_OPEN (bit 4) and set MANUAL mode (bit 2 = 0) in REG_MUIC_CTRL1 (0x6d) */
++	ret = i2c_smbus_write_byte_data(client, 0x6d, 0x00);
++	if (ret < 0)
++		dev_err(&client->dev, "S2MU106: failed to write CTRL1 (0x6d): %d\n", ret);
+ 
+-	clk_bulk_disable_unprepare(phy_drd->drv_data->n_clks, phy_drd->clks);
++	val = i2c_smbus_read_byte_data(client, 0x6d);
++	dev_info(&client->dev, "S2MU106: REG_MUIC_CTRL1 (0x6d) readback = 0x%02x\n", val);
++
++	/* 2. Set MANUAL_SW_CTRL (0x70) to USB path (0x24: DM=USB, DP=USB) */
++	ret = i2c_smbus_write_byte_data(client, 0x70, 0x24);
++	if (ret < 0)
++		dev_err(&client->dev, "S2MU106: failed to write MANUAL_SW_CTRL (0x70): %d\n", ret);
++
++	val = i2c_smbus_read_byte_data(client, 0x70);
++	dev_info(&client->dev, "S2MU106: REG_MANUAL_SW_CTRL (0x70) readback = 0x%02x\n", val);
++
++	dev_info(&client->dev, "S2MU106: USB D+/D- analog switch CLOSED to AP USB!\n");
++}
+ 
++static int s2mu106_muic_probe(struct i2c_client *client)
++{
++	dev_info(&client->dev, "S2MU106 MUIC driver probed at I2C addr 0x%02x\n", client->addr);
++	s2mu106_muic_client = client;
++	s2mu106_switch_to_usb(client);
+ 	return 0;
+ }
+ 
+-static int exynos850_usbdrd_phy_exit(struct phy *phy)
++static void s2mu106_muic_remove(struct i2c_client *client)
++{
++	if (s2mu106_muic_client == client)
++		s2mu106_muic_client = NULL;
++}
++
++static const struct of_device_id s2mu106_muic_of_match[] = {
++	{ .compatible = "samsung,s2mu106-muic" },
++	{ },
++};
++MODULE_DEVICE_TABLE(of, s2mu106_muic_of_match);
++
++static struct i2c_driver s2mu106_muic_driver = {
++	.driver = {
++		.name = "s2mu106-muic",
++		.of_match_table = s2mu106_muic_of_match,
++	},
++	.probe = s2mu106_muic_probe,
++	.remove = s2mu106_muic_remove,
++};
++
++static int exynos850_usbdrd_phy_init(struct phy *phy)
+ {
+ 	struct phy_usb_instance *inst = phy_get_drvdata(phy);
+ 	struct exynos5_usbdrd_phy *phy_drd = to_usbdrd_phy(inst);
+@@ -1651,41 +1690,71 @@ static int exynos850_usbdrd_phy_exit(struct phy *phy)
+ 	u32 reg;
+ 	int ret;
+ 
++	dev_info(phy_drd->dev, "exynos850_usbdrd_phy_init: fully energizing PHY\n");
++
++	if (s2mu106_muic_client)
++		s2mu106_switch_to_usb(s2mu106_muic_client);
++
++	/* Enable BOTH clks (phy ACLK) AND core_clks (ref) */
+ 	ret = clk_bulk_prepare_enable(phy_drd->drv_data->n_clks, phy_drd->clks);
+ 	if (ret)
+ 		return ret;
+ 
++	ret = clk_bulk_prepare_enable(phy_drd->drv_data->n_core_clks, phy_drd->core_clks);
++	if (ret) {
++		clk_bulk_disable_unprepare(phy_drd->drv_data->n_clks, phy_drd->clks);
++		return ret;
++	}
++
++	/* Power-on PHY in PMU: clear isolation (write 1 to 0x704) */
++	inst->phy_cfg->phy_isol(inst, false);
++
++	/* Initialize UTMI registers */
+ 	guard(mutex)(&phy_drd->phy_mutex);
++	inst->phy_cfg->phy_init(phy_drd);
+ 
+-	/* Set PHY clock and control HS PHY */
++	/* Unsuspend UTMI and force BVALID / VBUSVALID */
+ 	reg = readl(regs_base + EXYNOS850_DRD_UTMI);
+-	reg &= ~(UTMI_DP_PULLDOWN | UTMI_DM_PULLDOWN);
+-	reg |= UTMI_FORCE_SUSPEND | UTMI_FORCE_SLEEP;
++	reg &= ~(UTMI_FORCE_SUSPEND | UTMI_FORCE_SLEEP | UTMI_DP_PULLDOWN | UTMI_DM_PULLDOWN);
++	reg |= UTMI_FORCE_BVALID | UTMI_FORCE_VBUSVALID;
+ 	writel(reg, regs_base + EXYNOS850_DRD_UTMI);
+ 
+-	/* Power down PHY analog blocks */
++	/* Set VBUS valid and D+ pullup */
++	reg = readl(regs_base + EXYNOS850_DRD_HSP);
++	reg |= HSP_EN_UTMISUSPEND | HSP_COMMONONN | HSP_VBUSVLDEXT | HSP_VBUSVLDEXTSEL;
++	reg &= ~HSP_FSV_OUT_EN;
++	writel(reg, regs_base + EXYNOS850_DRD_HSP);
++
++	/* Power up analog blocks (clear SIDDQ) */
+ 	reg = readl(regs_base + EXYNOS850_DRD_HSP_TEST);
+-	reg |= HSP_TEST_SIDDQ;
++	reg &= ~HSP_TEST_SIDDQ;
+ 	writel(reg, regs_base + EXYNOS850_DRD_HSP_TEST);
+ 
+-	/* Link reset */
+-	reg = readl(regs_base + EXYNOS850_DRD_CLKRST);
+-	reg |= CLKRST_LINK_SW_RST;
+-	writel(reg, regs_base + EXYNOS850_DRD_CLKRST);
+-	fsleep(10); /* required before doing POR=low */
+-	reg &= ~CLKRST_LINK_SW_RST;
+-	writel(reg, regs_base + EXYNOS850_DRD_CLKRST);
++	return 0;
++}
+ 
+-	clk_bulk_disable_unprepare(phy_drd->drv_data->n_clks, phy_drd->clks);
++static int exynos850_usbdrd_phy_power_on(struct phy *phy)
++{
++	return exynos850_usbdrd_phy_init(phy);
++}
+ 
++static int exynos850_usbdrd_phy_power_off(struct phy *phy)
++{
++	/* Keep PHY powered and PMU un-isolated so reconnect works without S2MU106 PMIC */
++	return 0;
++}
++
++static int exynos850_usbdrd_phy_exit(struct phy *phy)
++{
++	/* Keep PHY energized so reconnect works */
+ 	return 0;
+ }
+ 
+ static const struct phy_ops exynos850_usbdrd_phy_ops = {
+ 	.init		= exynos850_usbdrd_phy_init,
+ 	.exit		= exynos850_usbdrd_phy_exit,
+-	.power_on	= exynos5_usbdrd_phy_power_on,
+-	.power_off	= exynos5_usbdrd_phy_power_off,
++	.power_on	= exynos850_usbdrd_phy_power_on,
++	.power_off	= exynos850_usbdrd_phy_power_off,
+ 	.owner		= THIS_MODULE,
+ };
+ 
+@@ -3065,7 +3134,28 @@ static struct platform_driver exynos5_usb3drd_phy = {
+ 	}
+ };
+ 
+-module_platform_driver(exynos5_usb3drd_phy);
++static int __init exynos5_usbdrd_module_init(void)
++{
++	int ret;
++
++	ret = platform_driver_register(&exynos5_usb3drd_phy);
++	if (ret)
++		return ret;
++
++	ret = i2c_add_driver(&s2mu106_muic_driver);
++	if (ret)
++		pr_err("Failed to register S2MU106 MUIC driver: %d\n", ret);
++
++	return 0;
++}
++module_init(exynos5_usbdrd_module_init);
++
++static void __exit exynos5_usbdrd_module_exit(void)
++{
++	i2c_del_driver(&s2mu106_muic_driver);
++	platform_driver_unregister(&exynos5_usb3drd_phy);
++}
++module_exit(exynos5_usbdrd_module_exit);
+ MODULE_DESCRIPTION("Samsung Exynos5 SoCs USB 3.0 DRD controller PHY driver");
+ MODULE_AUTHOR("Vivek Gautam <gautam.vivek@samsung.com>");
+ MODULE_LICENSE("GPL v2");
+diff --git a/drivers/usb/dwc3/core.c b/drivers/usb/dwc3/core.c
+index ceb49f2f8..2eba2edcc 100644
+--- a/drivers/usb/dwc3/core.c
++++ b/drivers/usb/dwc3/core.c
+@@ -2348,7 +2348,8 @@ int dwc3_core_probe(const struct dwc3_probe_data *data)
+ 			goto err_exit_debugfs;
+ 	}
+ 
+-	pm_runtime_put(dev);
++	/* Never autosuspend DWC3 core to ensure USB detection works without PMIC */
++	pm_runtime_forbid(dev);
+ 
+ 	dma_set_max_seg_size(dev, UINT_MAX);
+ 
+@@ -2621,18 +2622,8 @@ static int dwc3_resume_common(struct dwc3 *dwc, pm_message_t msg)
+ 
+ static int dwc3_runtime_checks(struct dwc3 *dwc)
+ {
+-	switch (dwc->current_dr_role) {
+-	case DWC3_GCTL_PRTCAP_DEVICE:
+-		if (dwc->connected)
+-			return -EBUSY;
+-		break;
+-	case DWC3_GCTL_PRTCAP_HOST:
+-	default:
+-		/* do nothing */
+-		break;
+-	}
+-
+-	return 0;
++	/* Never allow runtime autosuspend to ensure USB detection works without PMIC */
++	return -EBUSY;
+ }
+ 
+ int dwc3_runtime_suspend(struct dwc3 *dwc)
+diff --git a/drivers/usb/dwc3/gadget.c b/drivers/usb/dwc3/gadget.c
+index 1082e9c9a..aa4c3d1f5 100644
+--- a/drivers/usb/dwc3/gadget.c
++++ b/drivers/usb/dwc3/gadget.c
+@@ -2814,10 +2814,8 @@ static int dwc3_gadget_pullup(struct usb_gadget *g, int is_on)
+ 	 * the run stop sequence, so avoid duplicate operations here.
+ 	 */
+ 	ret = pm_runtime_get_sync(dwc->dev);
+-	if (!ret || ret < 0) {
+-		pm_runtime_put(dwc->dev);
+-		if (ret < 0)
+-			pm_runtime_set_suspended(dwc->dev);
++	if (ret < 0) {
++		pm_runtime_put_noidle(dwc->dev);
+ 		return ret;
+ 	}
+ 
+@@ -2828,12 +2826,12 @@ static int dwc3_gadget_pullup(struct usb_gadget *g, int is_on)
+ 
+ 	synchronize_irq(dwc->irq_gadget);
+ 
+-	if (!is_on)
++	if (!is_on) {
+ 		ret = dwc3_gadget_soft_disconnect(dwc);
+-	else
++		pm_runtime_put(dwc->dev);
++	} else {
+ 		ret = dwc3_gadget_soft_connect(dwc);
+-
+-	pm_runtime_put(dwc->dev);
++	}
+ 
+ 	return ret;
+ }

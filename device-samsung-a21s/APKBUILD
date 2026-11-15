@@ -1,0 +1,99 @@
+# Reference: <https://postmarketos.org/devicepkg>
+maintainer="Thomas Turner <tturner@lineageos.org>"
+pkgname=device-samsung-a21s
+pkgver=1
+pkgrel=8
+pkgdesc="Samsung Galaxy A21s"
+url="https://postmarketos.org"
+arch="aarch64"
+license="MIT"
+depends="
+	android-tools-avbtool
+	android-tools-mkbootimg
+	firmware-samsung-a21s
+	linux-postmarketos-exynos850
+	postmarketos-base
+	python3
+"
+makedepends="
+	android-tools-mkdtboimg
+	devicepkg-dev
+	dtc
+"
+source="
+	deviceinfo
+	exynos850-samsung-a21s-empty.dts
+	setup-usb-network.sh
+	s2mu106-switch.py
+	s2mu106_working_state.json
+	usb-network.service
+	s2mu106-battery-manager.py
+	s2mu106-battery-manager.service
+	screen-off.sh
+	screen-on.sh
+	screen-off.service
+	10-unmanage-usb.conf
+	10-console.conf
+"
+subpackages="$pkgname-systemd"
+options="!archcheck !check"
+
+build() {
+	devicepkg_build $startdir $pkgname
+
+	dtc -O dtb -o "$srcdir/dtbo" -I dts "$srcdir/exynos850-samsung-a21s-empty.dts"
+	mkdtboimg create "$srcdir/dtbo.img" "$srcdir/dtbo" --custom0=0x6 --custom1=0x20
+}
+
+package() {
+	devicepkg_package $startdir $pkgname
+
+	install -Dm644 "$srcdir/dtbo.img" "$pkgdir/boot/dtbo.img"
+	install -Dm755 "$srcdir/setup-usb-network.sh" "$pkgdir/usr/bin/setup-usb-network.sh"
+	install -Dm755 "$srcdir/s2mu106-switch.py" "$pkgdir/usr/bin/s2mu106-switch.py"
+	install -Dm644 "$srcdir/s2mu106_working_state.json" "$pkgdir/etc/s2mu106_working_state.json"
+	install -Dm644 "$srcdir/usb-network.service" "$pkgdir/usr/lib/systemd/system/usb-network.service"
+	install -Dm755 "$srcdir/s2mu106-battery-manager.py" "$pkgdir/usr/bin/s2mu106-battery-manager.py"
+	install -d "$pkgdir/usr/bin"
+	ln -s s2mu106-battery-manager.py "$pkgdir/usr/bin/battery-status"
+	install -Dm644 "$srcdir/s2mu106-battery-manager.service" "$pkgdir/usr/lib/systemd/system/s2mu106-battery-manager.service"
+	install -d "$pkgdir/usr/lib/systemd/system/multi-user.target.wants"
+	ln -s ../usb-network.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/usb-network.service"
+	ln -s ../s2mu106-battery-manager.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/s2mu106-battery-manager.service"
+
+	# Screen-off power saver
+	install -Dm755 "$srcdir/screen-off.sh" "$pkgdir/usr/bin/screen-off"
+	install -Dm755 "$srcdir/screen-on.sh" "$pkgdir/usr/bin/screen-on"
+	install -Dm644 "$srcdir/screen-off.service" "$pkgdir/usr/lib/systemd/system/screen-off.service"
+	ln -s ../screen-off.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/screen-off.service"
+
+	# NetworkManager ignore USB gadget
+	install -Dm644 "$srcdir/10-unmanage-usb.conf" "$pkgdir/etc/NetworkManager/conf.d/10-unmanage-usb.conf"
+
+	# Systemd console logging
+	install -Dm644 "$srcdir/10-console.conf" "$pkgdir/etc/systemd/system.conf.d/10-console.conf"
+
+	# Mask plymouth services to prevent boot crashes
+	install -d "$pkgdir/etc/systemd/system"
+	for u in plymouth-start.service plymouth-quit.service plymouth-quit-wait.service \
+	         plymouth-halt.service plymouth-reboot.service plymouth-poweroff.service \
+	         plymouth-kexec.service plymouth-read-write.service plymouth-switch-root.service; do
+		ln -sf /dev/null "$pkgdir/etc/systemd/system/$u"
+	done
+}
+
+sha512sums="
+143d1bcc36a12eed1fb713389e49fd78e1ea55f75ace45a9254e865f7fa7c7f25ce6f8c9311824b61a6f4756afb2a6b73118583a17ab777863368e8ba7c93922  deviceinfo
+6e127e53f2380efad88b64d9720954ca633b4dace54afba29207afd210b0c43cf6fe6c636cfb9f14aa486bd6887da3b30f2a241d4a9244cd593639790c0c53b9  exynos850-samsung-a21s-empty.dts
+0bc853d28d994074df1760d3fac366e7b272da32f90d4cec0ccb630b9361db2f9aefc2650fd899fd0701e2c359ff83c17db77034b368b074fef3275f0b7ba53d  setup-usb-network.sh
+d216b2dab1a466ab36dd304c5b5dfe40bc7962aeeafb88e80294091985ab2b4ef3c722150b0ae6aa1a0eba9f1c271733b9e4cfa4c41ced3be3e1c07b4853d3d5  s2mu106-switch.py
+0ff311f13dd8eb5c649b3cf819282b31cbbc83d7e9d929af294142ff34b05f0565eea75895529e1c04f4365f6f504ad70defea7ea3a6243cda5ae0e5240407e9  s2mu106_working_state.json
+aebb04db5c53bd451c5bdac71099b1bd6967c17187911d210f87abc09bcfb113dbeccfa9c9648d7128acb52e6806590fb4e5684b6910842ae696083858f4e94a  usb-network.service
+84b2b7dc3371179c6f167c02d1227b78a0bce85845789eab258a857e044349bbde7547c281a829b688442e14616f73018259ff6fdad87921ee7355f03b7926ba  s2mu106-battery-manager.py
+6e52e064aee11465700b8803766b79372b7b9718923c9b72fa1be352706e9c7632a6999d43a67372d11fd799488d98bba175ce06d0cc4d323fb80aba7d94cf6e  s2mu106-battery-manager.service
+8e0eb43c38a86a0d323135ee083d9e8b210c1a99fa094832fb6b8a2f03f12a81be93d15685842058567cd52987df81a44951d0704de3ffaaadbc84033495abb7  screen-off.sh
+aa71074f7ee2cd1ae7d1dee88b81c0d82060f5201058d833c55bcdc38ffd085a8ec3a321f5ec49a0d6aa34076455f4a9fad537346055597005a4dac9611e269e  screen-on.sh
+76820949ead9c632cbf76e3ad0547dfa5819dfae09483611817d951dca417dcb4beab5b6fbdf3290876b578416d04006153fafc839290b9c7ad38036610186e1  screen-off.service
+be5cdfcaba646dced79d9d80c3bd22ed55c1bf546ac07b9d453824034aad4b4e826477b1a13cfeb6e73b70dbbfd6aaac6de14e662574fb08647ae804ffb09943  10-unmanage-usb.conf
+5f6df45c0ffa6e7a31ae49abed28dfb7e6b9e02b017a52f1e0602a95c9a035c35178f089b9d5e13f844c39d348522db68ea07a643058527196924c33af9641f0  10-console.conf
+"

@@ -1,0 +1,15 @@
+[Unit]
+Description=S2MU106 Battery & Charge Threshold Daemon
+After=s2mu106-switch.service
+Wants=s2mu106-switch.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/bin/s2mu106-battery-manager.py --daemon --stop 70 --start 50 --interval 15
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

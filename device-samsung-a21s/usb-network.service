@@ -1,0 +1,16 @@
+[Unit]
+Description=USB Networking Gadget for SSH
+DefaultDependencies=no
+After=systemd-modules-load.service sys-kernel-config.mount
+Wants=sys-kernel-config.mount
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/setup-usb-network.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
