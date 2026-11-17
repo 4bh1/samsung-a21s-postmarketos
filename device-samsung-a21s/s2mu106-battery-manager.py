@@ -5,6 +5,10 @@ S2MU106 Battery & Charge Threshold Manager for Samsung Galaxy A21s (SM-A217F)
 Maintains battery charge level within a healthy range (default 50% - 70%)
 by toggling S2MU106 buck charger between BUCK_MODE (0x01, USB powered, charging off)
 and CHG_MODE (0x03, USB powered, charging on).
+
+Also maintains MUIC (0x3E) attach detection and Charger (0x3D) input current
+limits (2.0A) and fast-charge current (1.4A) so the phone charges properly
+even after cable reconnects and on standard 5V wall chargers.
 """
 
 import os
@@ -19,13 +23,23 @@ I2C_SLAVE_FORCE = 0x0706
 
 # I2C Addresses
 ADDR_FG = 0x3B       # S2MU106 Fuel Gauge
+ADDR_CCIC = 0x3C     # S2MU106 CCIC (Type-C)
 ADDR_CHG = 0x3D      # S2MU106 Charger & Buck MFD
+ADDR_MUIC = 0x3E     # S2MU106 MUIC & Analog Switch
 
 # Registers
 REG_FG_RVBAT = 0x04    # 2 bytes: Battery Voltage
 REG_FG_RCUR_CC = 0x06  # 2 bytes: Battery Current (coulomb counter)
 REG_FG_RSOC = 0x08     # 2 bytes: Battery State of Charge
+
+REG_CHG_STATUS1 = 0x07 # 1 byte: Charger status (VBUS detection)
 REG_CHG_CTRL0 = 0x18   # 1 byte: Charger Mode (bits 3:0)
+REG_CHG_CTRL1 = 0x19   # 1 byte: Input Current Limit
+REG_CHG_CTRL3 = 0x1B   # 1 byte: Fast Charge Current
+
+# Hardware settings
+INPUT_CURRENT_2000MA = 0x73 # 2.0A input limit
+FAST_CHARGE_1400MA = 0x38   # 1.4A fast charge current
 
 # Charger Modes
 MODE_CHARGER_OFF = 0x00
@@ -88,6 +102,9 @@ class S2MU106:
     def get_current_ma(self):
         data = self.read_regs(ADDR_FG, REG_FG_RCUR_CC, 2)
         compliment = (data[1] << 8) | data[0]
+        # In S2MU106 fuel gauge hardware:
+        # Negative two's complement indicates current flowing INTO battery (Charging).
+        # Positive indicates current drawn OUT of battery (Discharging).
         if compliment & 0x8000:
             curr = (((~compliment & 0xFFFF) + 1) * 1000) >> 12
         else:
@@ -104,12 +121,78 @@ class S2MU106:
         self.write_reg(ADDR_CHG, REG_CHG_CTRL0, new_ctrl0)
         return new_ctrl0
 
+    def kickstart_charging(self):
+        """
+        Triggers rising edge (0x01 -> 0x03) on S2MU106 charger enable bit.
+        The S2MU106 state machine requires this transition to switch from
+        Standby / Bypass idle into active Constant Current (CC) charging.
+        """
+        self.set_charger_mode(MODE_BUCK_ONLY)
+        time.sleep(0.3)
+        self.set_charger_mode(MODE_CHARGING)
+
+    def get_charger_status(self):
+        try:
+            st = self.read_regs(ADDR_CHG, REG_CHG_STATUS1, 5)
+            vbus_active = (st[0] != 0x00) or (st[1] != 0x00)
+            return vbus_active, st
+        except Exception:
+            return False, []
+
+    def maintain_hardware(self, mode=MODE_CHARGING):
+        """
+        Actively maintains MUIC VBUS attach comparator, CCIC Type-C termination,
+        and Charger current limit registers so charging stays functional across replugs.
+        """
+        # 1. Maintain MUIC attach detection (0x09 - 0x25)
+        muic_regs = {
+            0x09: 0xFC, 0x0A: 0x7A, 0x0B: 0xFF, 0x0C: 0xFF,
+            0x0D: 0x7F, 0x0E: 0xFF, 0x12: 0x38, 0x13: 0x60,
+            0x15: 0x40, 0x16: 0x38, 0x17: 0x30, 0x18: 0x62,
+            0x19: 0x70, 0x1D: 0xD0, 0x20: 0x22, 0x21: 0xF0,
+            0x24: 0xA3, 0x25: 0x30
+        }
+        for r, val in muic_regs.items():
+            try:
+                cur = self.read_regs(ADDR_MUIC, r, 1)[0]
+                if cur != val:
+                    self.write_reg(ADDR_MUIC, r, val)
+            except Exception:
+                pass
+
+        # 2. Maintain CCIC Type-C Sink mode (0x03 - 0x07)
+        ccic_regs = {
+            0x03: 0x78, 0x04: 0x90, 0x05: 0x77, 0x06: 0x88, 0x07: 0x46
+        }
+        for r, val in ccic_regs.items():
+            try:
+                cur = self.read_regs(ADDR_CCIC, r, 1)[0]
+                if cur != val:
+                    self.write_reg(ADDR_CCIC, r, val)
+            except Exception:
+                pass
+
+        # 3. Maintain Charger limits and mode
+        try:
+            cur_in = self.read_regs(ADDR_CHG, REG_CHG_CTRL1, 1)[0]
+            if cur_in != INPUT_CURRENT_2000MA:
+                self.write_reg(ADDR_CHG, REG_CHG_CTRL1, INPUT_CURRENT_2000MA)
+
+            cur_fc = self.read_regs(ADDR_CHG, REG_CHG_CTRL3, 1)[0]
+            if cur_fc != FAST_CHARGE_1400MA:
+                self.write_reg(ADDR_CHG, REG_CHG_CTRL3, FAST_CHARGE_1400MA)
+
+            self.set_charger_mode(mode)
+        except Exception:
+            pass
+
 
 def get_status_dict(pmic):
     soc = pmic.get_soc()
     vbat = pmic.get_vbat_mv()
     curr = pmic.get_current_ma()
     mode, raw_ctrl0 = pmic.get_charger_mode()
+    vbus_ok, raw_status = pmic.get_charger_status()
 
     if mode == MODE_CHARGING:
         mode_str = "charging"
@@ -134,7 +217,9 @@ def get_status_dict(pmic):
         "state": state,
         "mode": mode_str,
         "mode_raw": mode,
+        "vbus_connected": vbus_ok,
         "reg_ctrl0": hex(raw_ctrl0),
+        "reg_status": [hex(b) for b in raw_status] if raw_status else [],
         "timestamp": int(time.time()),
     }
 
@@ -165,6 +250,9 @@ def run_daemon(stop_pct=70.0, start_pct=50.0, poll_interval=15):
         log(f"FATAL: {I2C_BUS} not found")
         sys.exit(1)
 
+    # Initial hardware initialization
+    pmic.maintain_hardware(MODE_CHARGING)
+
     while True:
         try:
             status = get_status_dict(pmic)
@@ -173,13 +261,22 @@ def run_daemon(stop_pct=70.0, start_pct=50.0, poll_interval=15):
             soc = status["soc_percent"]
             mode = status["mode_raw"]
 
-            # Charge control hysteresis logic
+            target_mode = mode
             if soc >= stop_pct and mode != MODE_BUCK_ONLY:
                 log(f"SoC ({soc:.1f}%) >= stop threshold ({stop_pct}%). Suspending charge (buck-only).")
-                pmic.set_charger_mode(MODE_BUCK_ONLY)
+                target_mode = MODE_BUCK_ONLY
             elif soc <= start_pct and mode != MODE_CHARGING:
                 log(f"SoC ({soc:.1f}%) <= start threshold ({start_pct}%). Enabling charge.")
-                pmic.set_charger_mode(MODE_CHARGING)
+                target_mode = MODE_CHARGING
+
+            # Maintain hardware registers and charging state continuously
+            pmic.maintain_hardware(target_mode)
+
+            # If charging is intended and VBUS is present, but current is idling (< 25 mA),
+            # kickstart the CC charge state machine via edge trigger
+            if target_mode == MODE_CHARGING and status.get("vbus_connected") and status.get("current_ma", 0) < 25:
+                log("VBUS connected but charger in idle standby. Kickstarting CC charge cycle.")
+                pmic.kickstart_charging()
 
         except Exception as e:
             log(f"Error in monitor loop: {e}")
@@ -202,12 +299,12 @@ def main():
     pmic = S2MU106()
 
     if args.enable_charge:
-        pmic.set_charger_mode(MODE_CHARGING)
-        print("Charging FORCE ENABLED (0x03)")
+        pmic.maintain_hardware(MODE_CHARGING)
+        print("Charging FORCE ENABLED (0x03) with 2.0A input / 1.4A fast-charge")
         return
 
     if args.disable_charge:
-        pmic.set_charger_mode(MODE_BUCK_ONLY)
+        pmic.maintain_hardware(MODE_BUCK_ONLY)
         print("Charging FORCE DISABLED (buck-only mode 0x01)")
         return
 
@@ -229,11 +326,13 @@ def main():
         if args.json:
             print(json.dumps(status, indent=2))
         else:
+            vbus_str = "Connected" if status.get("vbus_connected") else "Disconnected / 0V"
             print(f"=== S2MU106 Battery Status ===")
-            print(f"Level:         {status['soc_percent']:.1f}%")
-            print(f"Voltage:       {status['voltage_mv']} mV")
-            print(f"Current:       {status['current_ma']} mA ({status['state']})")
-            print(f"Charger Mode:  {status['mode']} (CTRL0: {status['reg_ctrl0']})")
+            print(f"Level:          {status['soc_percent']:.1f}%")
+            print(f"Voltage:        {status['voltage_mv']} mV")
+            print(f"Current:        {status['current_ma']} mA ({status['state']})")
+            print(f"Charger Mode:   {status['mode']} (CTRL0: {status['reg_ctrl0']})")
+            print(f"VBUS Power:     {vbus_str}")
     except Exception as e:
         print(f"Error reading battery status: {e}", file=sys.stderr)
         sys.exit(1)

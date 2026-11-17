@@ -13,7 +13,7 @@ def log(msg):
     except Exception:
         pass
 
-log("Starting comprehensive S2MU106 switch initialization...")
+log("Starting comprehensive S2MU106 switch and charger initialization...")
 
 for attempt in range(20):
     if os.path.exists(BUS):
@@ -42,8 +42,8 @@ def read_reg(addr, reg):
 # 1. Restore from JSON if present
 restore_map = {
     0x3C: list(range(0x03, 0x09)) + list(range(0x0A, 0x0D)) + list(range(0x10, 0x15)) + list(range(0x18, 0x24)) + [0x26, 0x27, 0x2E, 0x2F, 0x31, 0x35, 0x36, 0x3E, 0x3F] + list(range(0x40, 0x45)) + [0x90, 0xB3, 0xB4, 0xB7, 0xF6, 0xF8, 0xF9],
-    0x3D: list(range(0x60, 0x72)),
-    0x3E: [0x59] + list(range(0x66, 0x72))
+    0x3D: list(range(0x18, 0x26)) + list(range(0x60, 0x72)),
+    0x3E: list(range(0x09, 0x26)) + [0x59] + list(range(0x66, 0x72))
 }
 
 if os.path.exists(JSON_PATH):
@@ -62,7 +62,7 @@ if os.path.exists(JSON_PATH):
     except Exception as e:
         log("Warning: could not restore full JSON: " + str(e))
 
-# 2. Explicitly enforce critical switch registers
+# 2. Explicitly enforce critical switch & charger registers
 # 0x3C: Type-C CC Rd termination & Sink mode
 try:
     write_reg(0x3C, 0x03, 0x78)
@@ -73,8 +73,11 @@ try:
 except Exception as e:
     log("Warning 0x3C enforce: " + str(e))
 
-# 0x3D: AP USB switch
+# 0x3D: AP USB switch + Fast charging (2.0A input limit, 1.4A charge current)
 try:
+    write_reg(0x3D, 0x19, 0x73) # 2.0A input current limit
+    write_reg(0x3D, 0x1B, 0x38) # 1.4A fast charge current
+    write_reg(0x3D, 0x18, 0x03) # Charging mode enabled
     write_reg(0x3D, 0x6D, 0x98) # CTRL1 manual
     write_reg(0x3D, 0x70, 0x77) # MANUAL_SW_CTRL: AP USB
     v_3d_6d = read_reg(0x3D, 0x6D)
@@ -84,8 +87,12 @@ except Exception as e:
     v_3d_6d = 0
     v_3d_70 = 0
 
-# 0x3E: Secondary switch
+# 0x3E: Secondary switch + MUIC VBUS attach detection
 try:
+    write_reg(0x3E, 0x09, 0xFC)
+    write_reg(0x3E, 0x0A, 0x7A)
+    write_reg(0x3E, 0x0B, 0xFF)
+    write_reg(0x3E, 0x0C, 0xFF)
     write_reg(0x3E, 0x6D, 0x12)
     write_reg(0x3E, 0x70, 0x24)
     v_3e_70 = read_reg(0x3E, 0x70)

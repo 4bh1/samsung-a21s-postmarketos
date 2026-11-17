@@ -64,6 +64,9 @@ echo "USB Network" > "$GADGET/configs/c.1/strings/0x409/configuration"
 rm -f "$GADGET/configs/c.1/"* 2>/dev/null || true
 ln -sf "$GADGET/functions/$USB_FUNCTION" "$GADGET/configs/c.1/"
 
+# Request standard 500 mA power from host
+echo 500 > "$GADGET/configs/c.1/MaxPower" 2>/dev/null || true
+
 # Bind to UDC
 echo "$UDC" > "$GADGET/UDC"
 echo "Gadget bound to $UDC"
