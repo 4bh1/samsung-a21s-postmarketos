@@ -2,7 +2,7 @@
 maintainer="Thomas Turner <tturner@lineageos.org>"
 pkgname=device-samsung-a21s
 pkgver=1
-pkgrel=10
+pkgrel=11
 pkgdesc="Samsung Galaxy A21s"
 url="https://postmarketos.org"
 arch="aarch64"
@@ -32,6 +32,7 @@ source="
 	screen-off.sh
 	screen-on.sh
 	screen-off.service
+	a21s-display.py
 	10-unmanage-usb.conf
 	10-console.conf
 "
@@ -61,11 +62,11 @@ package() {
 	ln -s ../usb-network.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/usb-network.service"
 	ln -s ../s2mu106-battery-manager.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/s2mu106-battery-manager.service"
 
-	# Screen-off power saver
+	# Screen-off power saver (installed, disabled by default on boot)
+	install -Dm755 "$srcdir/a21s-display.py" "$pkgdir/usr/bin/a21s-display"
 	install -Dm755 "$srcdir/screen-off.sh" "$pkgdir/usr/bin/screen-off"
 	install -Dm755 "$srcdir/screen-on.sh" "$pkgdir/usr/bin/screen-on"
 	install -Dm644 "$srcdir/screen-off.service" "$pkgdir/usr/lib/systemd/system/screen-off.service"
-	ln -s ../screen-off.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/screen-off.service"
 
 	# NetworkManager ignore USB gadget
 	install -Dm644 "$srcdir/10-unmanage-usb.conf" "$pkgdir/etc/NetworkManager/conf.d/10-unmanage-usb.conf"
@@ -91,9 +92,10 @@ a2e46ba5246fda297bcf8408af5fc5ec3933a2a0c3c2a3fb83e5fe7b9610fd0ef38929813933f18c
 aebb04db5c53bd451c5bdac71099b1bd6967c17187911d210f87abc09bcfb113dbeccfa9c9648d7128acb52e6806590fb4e5684b6910842ae696083858f4e94a  usb-network.service
 70528ac5052ae2372fd405745ed3fc59121e30fda36066460b44f3327b5cd0205745399df3de1d295e01ac0799080014126a4ca605fc345dca2dc9ecdaa5a372  s2mu106-battery-manager.py
 6e52e064aee11465700b8803766b79372b7b9718923c9b72fa1be352706e9c7632a6999d43a67372d11fd799488d98bba175ce06d0cc4d323fb80aba7d94cf6e  s2mu106-battery-manager.service
-a31861580530e3f025e066c5dbeb39af79da2b19e78701fbfa36cecb29ae4eda1df8efd928a9a58286362837e1dc6afad443a23d2d8943c98150d0865157fc1d  screen-off.sh
-71686ba95d22738732b653f2bcd3dbc24ca216d82452bbf73883de9215addc592bbe85d966bda100fb7c30aff7a9743069313a35e886acd4e64c749d81133f92  screen-on.sh
+c6282d7ad074c4fe397e042b3cfc4825e71ddbf3a0b1654ee0ec9920f732963206298fb5838ff355b810586f6e4b8f4a36c99ca9556be0c7874038066caffa90  screen-off.sh
+223975977c351ba4380d88693c03839cacaf8a1bdf31cc8ac06189291cab6e6b80ef7d50d483d4d5491190bd413c3e52995787a46c882dcf577e63cf601ada51  screen-on.sh
 76820949ead9c632cbf76e3ad0547dfa5819dfae09483611817d951dca417dcb4beab5b6fbdf3290876b578416d04006153fafc839290b9c7ad38036610186e1  screen-off.service
+ccf92d7c3596fbdab092521799e8a6c32ef6e6edd664888f562e76f09e239234a8b30ba1b16a8120fefee3bc5df1bd7326b745a5e839f2bee1e00a2ffe01a913  a21s-display.py
 be5cdfcaba646dced79d9d80c3bd22ed55c1bf546ac07b9d453824034aad4b4e826477b1a13cfeb6e73b70dbbfd6aaac6de14e662574fb08647ae804ffb09943  10-unmanage-usb.conf
 bb89222998b32bd817839162836349cea42efcd72e5a70a3d21f61ef5e3aef07bd9b33288f07b9f7b5c40f2008863f5db2132ba3b2ef8a26e351c394829a736e  10-console.conf
 "
