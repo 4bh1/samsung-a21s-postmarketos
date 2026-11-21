@@ -1,0 +1,16 @@
+[Unit]
+Description=Samsung Galaxy A21s Console Status Dashboard
+Documentation=https://postmarketos.org
+After=multi-user.target usb-network.service
+Wants=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/bin/a21s-console-dashboard.py
+Restart=always
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

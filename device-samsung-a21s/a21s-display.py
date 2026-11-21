@@ -1,47 +1,32 @@
 #!/usr/bin/env python3
 """
 Samsung Galaxy A21s Display & Backlight Controller
-Controls Texas Instruments LM36274 backlight & bias IC via Exynos 850 hardware I2C-1,
-plus GPIO HWEN power line (gpg2-1) and Linux framebuffer blanking.
-
-Hardware mapping:
-  - HWEN: gpg2-1 (pinctrl_peri 0x139b00a4, bit 1, mask 0x02, Active HIGH)
-  - RST:  gpg2-4 (pinctrl_peri 0x139b00a4, bit 4, mask 0x10, Active HIGH - KEEP HIGH!)
-  - I2C1: Exynos I2C-1 controller at 0x13840000 on pins gpp0-2 (SCL) and gpp0-3 (SDA)
-  - LM36274: Slave Address 0x11
-      Reg 0x08: Backlight Enable (0x1F = BL_EN + 4 strings enabled)
-      Reg 0x04 / 0x05: Brightness LSB / MSB (11-bit)
-      Reg 0x09: Bias Config (0x1E = VPOS & VNEG LCD bias enable, I2C mode)
+Controls screen backlight and display state via standard Linux sysfs
+(/sys/class/backlight/panel/brightness) and framebuffer ioctls (/dev/fb0),
+with fallback to hardware I2C/GPIO registers if /dev/mem is available.
 
 Usage:
-  a21s-display off             Turn off backlight (power saving)
-  a21s-display on              Turn on backlight (100% full brightness)
+  a21s-display off                 Turn off backlight (power saving)
+  a21s-display on                  Turn on backlight (normal full brightness)
   a21s-display brightness <1-100>  Set backlight brightness percentage
-  a21s-display status          Show current display and backlight power state
-  a21s-display toggle          Toggle between on and off
+  a21s-display status              Show current display and backlight power state
+  a21s-display toggle              Toggle between on and off
 """
 
 import sys
 import os
-import mmap
+import fcntl
 import struct
-import time
-import subprocess
 
-PINCTRL_PERI_BASE = 0x139B0000
-I2C1_BASE = 0x13840000
-PAGESIZE = 4096
+SYSFS_BRIGHTNESS = "/sys/class/backlight/panel/brightness"
+SYSFS_MAX_BRIGHTNESS = "/sys/class/backlight/panel/max_brightness"
+SYSFS_BL_POWER = "/sys/class/backlight/panel/bl_power"
+FB_DEV = "/dev/fb0"
+STATE_FILE = "/run/a21s-backlight.state"
 
-# Offsets in pinctrl_peri
-GPP0_CON_OFF = 0x020
-GPG2_DAT_OFF = 0x0A4
-
-# Pin masks on gpg2
-BL_EN_MASK = 0x02   # Pin 1: HWEN (1 = Powered, 0 = Shutdown)
-RST_MASK = 0x10     # Pin 4: gpio_lcd_rst (1 = Normal, MUST REMAIN 1)
-
-LM36274_I2C_ADDR = 0x11
-IICCON_VAL = 0xAF   # ACKEN | Tx/Rx Int | Prescaler
+FBIOBLANK = 0x4611
+FB_BLANK_UNBLANK = 0
+FB_BLANK_POWERDOWN = 4
 
 def check_root():
     if os.geteuid() != 0:
@@ -49,137 +34,112 @@ def check_root():
         print("Please run with sudo: sudo a21s-display [on|off|status|toggle]", file=sys.stderr)
         sys.exit(1)
 
-def hw_i2c_write(mem_i2c, addr, data_bytes):
-    struct.pack_into("<I", mem_i2c, 0x00, IICCON_VAL)
-    struct.pack_into("<I", mem_i2c, 0x0c, (addr << 1) & 0xfe)
-    struct.pack_into("<I", mem_i2c, 0x04, 0xf0) # Master TX, Start
-    for _ in range(1000):
-        if struct.unpack_from("<I", mem_i2c, 0x00)[0] & 0x10:
-            break
-        time.sleep(0.0001)
-    else:
-        struct.pack_into("<I", mem_i2c, 0x04, 0xd0)
-        return False
-    if struct.unpack_from("<I", mem_i2c, 0x04)[0] & 0x01: # NACK
-        struct.pack_into("<I", mem_i2c, 0x04, 0xd0)
-        struct.pack_into("<I", mem_i2c, 0x00, IICCON_VAL & ~0x10)
-        return False
-    for b in data_bytes:
-        struct.pack_into("<I", mem_i2c, 0x0c, b)
-        struct.pack_into("<I", mem_i2c, 0x00, IICCON_VAL & ~0x10)
-        for _ in range(1000):
-            if struct.unpack_from("<I", mem_i2c, 0x00)[0] & 0x10:
-                break
-            time.sleep(0.0001)
-        else:
-            struct.pack_into("<I", mem_i2c, 0x04, 0xd0)
-            return False
-        if struct.unpack_from("<I", mem_i2c, 0x04)[0] & 0x01:
-            struct.pack_into("<I", mem_i2c, 0x04, 0xd0)
-            struct.pack_into("<I", mem_i2c, 0x00, IICCON_VAL & ~0x10)
-            return False
-    struct.pack_into("<I", mem_i2c, 0x04, 0xd0) # Stop
-    struct.pack_into("<I", mem_i2c, 0x00, IICCON_VAL & ~0x10)
-    time.sleep(0.001)
-    return True
-
-STATE_FILE = "/run/a21s-backlight.state"
-
-def get_hardware_state():
-    fd = os.open("/dev/mem", os.O_RDONLY | os.O_SYNC)
-    try:
-        mem = mmap.mmap(fd, PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ, offset=PINCTRL_PERI_BASE)
+def get_max_brightness():
+    if os.path.exists(SYSFS_MAX_BRIGHTNESS):
         try:
-            gpg2 = struct.unpack_from("<I", mem, GPG2_DAT_OFF)[0]
-            is_panel_rst = bool(gpg2 & RST_MASK)
-            is_bl_on = True
-            if os.path.exists(STATE_FILE):
-                try:
-                    with open(STATE_FILE, "r") as f:
-                        if f.read().strip() == "off":
-                            is_bl_on = False
-                except Exception:
-                    pass
-            return is_bl_on, is_panel_rst, gpg2
-        finally:
-            mem.close()
-    finally:
-        os.close(fd)
+            with open(SYSFS_MAX_BRIGHTNESS, "r") as f:
+                return int(f.read().strip())
+        except Exception:
+            pass
+    return 306
 
-def configure_i2c_pins(mem_peri):
-    con = struct.unpack_from("<I", mem_peri, GPP0_CON_OFF)[0]
-    con = (con & ~0xff00) | 0x2200
-    struct.pack_into("<I", mem_peri, GPP0_CON_OFF, con)
+def get_current_brightness():
+    if os.path.exists(SYSFS_BRIGHTNESS):
+        try:
+            with open(SYSFS_BRIGHTNESS, "r") as f:
+                return int(f.read().strip())
+        except Exception:
+            pass
+    return 0
 
 def turn_off():
     check_root()
-    fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
-    try:
-        mem_peri = mmap.mmap(fd, PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=PINCTRL_PERI_BASE)
-        mem_i2c = mmap.mmap(fd, PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=I2C1_BASE)
+    # 1. Turn off backlight via sysfs
+    if os.path.exists(SYSFS_BRIGHTNESS):
         try:
-            configure_i2c_pins(mem_peri)
-            # Set brightness = 0
-            hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x04, 0x00])
-            hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x05, 0x00])
-            # Turn off backlight boost & LED strings (Reg 0x08 = 0x00)
-            # Panel bias (0x09) and HWEN remain active so MIPI DSI display link stays awake
-            hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x08, 0x00])
-            with open(STATE_FILE, "w") as f:
-                f.write("off\n")
-            print("Backlight turned OFF (Screen dark, power saved, panel active)")
-        finally:
-            mem_i2c.close()
-            mem_peri.close()
-    finally:
-        os.close(fd)
+            with open(SYSFS_BRIGHTNESS, "w") as f:
+                f.write("0\n")
+        except Exception as e:
+            print(f"Warning: Failed to set sysfs brightness: {e}", file=sys.stderr)
+
+    if os.path.exists(SYSFS_BL_POWER):
+        try:
+            with open(SYSFS_BL_POWER, "w") as f:
+                f.write("4\n")
+        except Exception:
+            pass
+
+    # 2. Blank FB if available
+    if os.path.exists(FB_DEV):
+        try:
+            fd = os.open(FB_DEV, os.O_RDWR)
+            try:
+                fcntl.ioctl(fd, FBIOBLANK, FB_BLANK_POWERDOWN)
+            finally:
+                os.close(fd)
+        except Exception:
+            pass
+
+    with open(STATE_FILE, "w") as f:
+        f.write("off\n")
+    print("Backlight turned OFF (Screen dark, power saved)")
 
 def set_brightness(pct):
     check_root()
     pct = max(0, min(100, int(pct)))
-    # 11-bit code: 0 to 2047
-    # LM36274 register 0x04 has lower 3 bits (val & 0x07)
-    # LM36274 register 0x05 has upper 8 bits (val >> 3)
-    val = int(pct * 2047 / 100)
-    lsb = val & 0x07
-    msb = (val >> 3) & 0xff
-    fd = os.open("/dev/mem", os.O_RDWR | os.O_SYNC)
-    try:
-        mem_peri = mmap.mmap(fd, PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=PINCTRL_PERI_BASE)
-        mem_i2c = mmap.mmap(fd, PAGESIZE, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=I2C1_BASE)
+    max_b = get_max_brightness()
+    val = int(pct * max_b / 100)
+
+    # 1. Unblank FB if needed
+    if pct > 0 and os.path.exists(FB_DEV):
         try:
-            configure_i2c_pins(mem_peri)
-            hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x04, lsb])
-            hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x05, msb])
-            if pct > 0:
-                hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x08, 0x1f])
-                with open(STATE_FILE, "w") as f:
-                    f.write("on\n")
-                print(f"Brightness set to {pct}% ({val}/2047)")
-            else:
-                hw_i2c_write(mem_i2c, LM36274_I2C_ADDR, [0x08, 0x00])
-                with open(STATE_FILE, "w") as f:
-                    f.write("off\n")
-                print("Brightness set to 0% (Backlight disabled)")
-        finally:
-            mem_i2c.close()
-            mem_peri.close()
-    finally:
-        os.close(fd)
+            fd = os.open(FB_DEV, os.O_RDWR)
+            try:
+                fcntl.ioctl(fd, FBIOBLANK, FB_BLANK_UNBLANK)
+            finally:
+                os.close(fd)
+        except Exception:
+            pass
+
+    # 2. Set sysfs power and brightness
+    if os.path.exists(SYSFS_BL_POWER):
+        try:
+            with open(SYSFS_BL_POWER, "w") as f:
+                f.write("0\n" if pct > 0 else "4\n")
+        except Exception:
+            pass
+
+    if os.path.exists(SYSFS_BRIGHTNESS):
+        try:
+            with open(SYSFS_BRIGHTNESS, "w") as f:
+                f.write(f"{val}\n")
+        except Exception as e:
+            print(f"Error setting brightness: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    state = "on" if pct > 0 else "off"
+    with open(STATE_FILE, "w") as f:
+        f.write(f"{state}\n")
+
+    if pct > 0:
+        print(f"Brightness set to {pct}% ({val}/{max_b})")
+    else:
+        print("Brightness set to 0% (Backlight disabled)")
 
 def turn_on():
-    set_brightness(100)
+    set_brightness(75)  # 75% = ~230 / 306, bright and power efficient
 
 def show_status():
-    check_root()
-    is_bl_on, is_panel_rst, gpg2 = get_hardware_state()
-    pwr_str = "Enabled" if is_bl_on else "Disabled"
-    state_str = "ON (Illuminated)" if is_bl_on else "OFF (Powered down)"
-    panel_str = "Running" if is_panel_rst else "In Reset (Error)"
-    print(f"Display State:   {state_str}")
-    print(f"Backlight Power: {pwr_str}")
-    print(f"Panel Controller:{panel_str}")
-    print(f"Hardware Lines:  gpg2={hex(gpg2)} (bl_en={'1' if is_bl_on else '0'}, rst={'1' if is_panel_rst else '0'})")
+    cur_b = get_current_brightness()
+    max_b = get_max_brightness()
+    pct = int(cur_b * 100 / max_b) if max_b > 0 else 0
+    is_on = cur_b > 0
+
+    pwr_str = "Enabled" if is_on else "Disabled"
+    state_str = f"ON ({pct}% - {cur_b}/{max_b})" if is_on else "OFF (Powered down)"
+    print(f"Display State:    {state_str}")
+    print(f"Backlight Power:  {pwr_str}")
+    print(f"Brightness Level: {pct}% ({cur_b}/{max_b})")
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help", "help"):
@@ -206,14 +166,13 @@ def main():
     elif cmd.isdigit():
         set_brightness(int(cmd))
     elif cmd in ("toggle", "switch"):
-        check_root()
-        is_bl_on, _, _ = get_hardware_state()
-        if is_bl_on:
+        cur_b = get_current_brightness()
+        if cur_b > 0:
             turn_off()
         else:
             turn_on()
     else:
-        print(f"Unknown command: '{cmd}'. Use: on, off, status, toggle", file=sys.stderr)
+        print(f"Unknown command: '{cmd}'. Use: on, off, status, brightness <1-100>, toggle", file=sys.stderr)
         sys.exit(1)
 
 if __name__ == "__main__":

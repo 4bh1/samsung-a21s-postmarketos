@@ -175,6 +175,21 @@ screen-off
 screen-on
 ```
 
+### 6. Live On-Screen Console Statistics Dashboard
+The phone automatically runs the high-contrast black & white console dashboard on boot, resolving the static Samsung boot logo:
+```bash
+# Check dashboard service status
+systemctl status a21s-console-dashboard.service
+
+# Real-time metrics rendered directly to /dev/fb0 and /dev/tty0:
+# - Hostname, System Uptime, Date & Time, System Load
+# - CPU utilization %, 8-core Exynos 850 frequency, SoC thermal temperature
+# - RAM, Swap, and Root filesystem (/) disk usage with visual progress bars
+# - Dynamic IP addresses (rndis0 USB gadget, wlan0 Wi-Fi)
+# - S2MU106 Battery charge %, voltage, temp, and USB charging bypass mode
+# - Heartbeat counter and essential service monitors
+```
+
 ---
 
 ## Troubleshooting & FAQ

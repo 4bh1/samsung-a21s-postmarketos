@@ -19,6 +19,7 @@ This package provides the postmarketOS device integration, Systemd 262 compatibi
 | **Watchdog Protection** | **Stabilized** | Automated hardware petter daemon (`/dev/watchdog*`) |
 | **Storage & Mounts** | **Working** | Native eMMC ext4 (`/dev/mmcblk0p37` root, `p33` boot) |
 | **Screen Control** | **Working** | Low-level backlight & display control (`a21s-display`) |
+| **Console Dashboard** | **Active** | Live black & white stats dashboard on `/dev/fb0` & `/dev/tty0` |
 
 ---
 
@@ -55,6 +56,7 @@ pmbootstrap flasher flash_kernel
 Deep-dive architecture references are available in the [`docs/`](docs/) directory:
 
 - 📖 [**Systemd 262 Compatibility Layer (`compat.c`)**](docs/systemd-compatibility.md): Explains how we resolved `-EUNATCH`, missing `AT_EMPTY_PATH` support in musl libc on Linux 4.19, Netlink multicast downgrades, and preserved upgrade survivability across `apk upgrade`.
+- 📊 [**Console Framebuffer Dashboard & Display Architecture**](docs/console-dashboard-and-display.md): Resolves the static Samsung boot logo freeze with direct double-buffered `/dev/fb0` text blitting, 2x scaled PSF font rendering, and real-time CPU/RAM/Disk/IP/Battery statistics.
 - 📡 [**S5N2560 Wi-Fi Bringup Guide**](docs/wifi-bringup.md): Details extracting `mx140.bin` firmware and HCF calibration files from the stock Android `super` partition, bypassing kernel VFS restrictions, and disabling MAC randomization.
 - 🔋 [**Power Management & Watchdogs**](docs/power-and-watchdogs.md): S2MU106 PMIC register-level hysteresis, eliminating battery swelling via Buck-Only mode, and defeating watchdog resets.
 
