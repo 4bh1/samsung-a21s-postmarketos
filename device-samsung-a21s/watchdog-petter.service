@@ -1,0 +1,14 @@
+[Unit]
+Description=Hardware Watchdog Petter Daemon
+DefaultDependencies=no
+Before=sysinit.target shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/bin/watchdog-petter.py
+Restart=always
+RestartSec=1
+
+[Install]
+WantedBy=sysinit.target

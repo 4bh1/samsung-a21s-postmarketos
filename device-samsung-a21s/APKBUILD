@@ -2,7 +2,7 @@
 maintainer="Thomas Turner <tturner@lineageos.org>"
 pkgname=device-samsung-a21s
 pkgver=1
-pkgrel=17
+pkgrel=18
 pkgdesc="Samsung Galaxy A21s"
 url="https://postmarketos.org"
 arch="aarch64"
@@ -19,6 +19,8 @@ depends="
 "
 makedepends="
 	devicepkg-dev
+	gcc
+	musl-dev
 "
 source="
 	deviceinfo
@@ -37,31 +39,69 @@ source="
 	99-wifi.conf
 	wlan0-init.service
 	00-allow-root.conf
+	telnetd.service
+	80-wifi.rules
+	10-compat.conf
+	compat.c
+	init
+	watchdog-petter.py
+	watchdog-petter.service
 "
 subpackages="$pkgname-systemd"
 options="!archcheck !check"
 
 build() {
 	devicepkg_build $startdir $pkgname
+	gcc -O2 -fPIC -shared -Wall "$srcdir/compat.c" -o "$srcdir/libsystemd-compat-4.19.so" -ldl
 }
 
 package() {
 	devicepkg_package $startdir $pkgname
 
+	# Systemd 262 compatibility interceptor library and preload
+	install -Dm755 "$srcdir/libsystemd-compat-4.19.so" "$pkgdir/usr/lib/libsystemd-compat-4.19.so"
+	install -d "$pkgdir/etc"
+	echo "/usr/lib/libsystemd-compat-4.19.so" > "$pkgdir/etc/ld.so.preload"
+
+	# Systemd 262 compatibility drop-ins (disable problematic sandboxing)
+	install -d "$pkgdir/etc/systemd/system/service.d"
+	install -Dm644 "$srcdir/10-compat.conf" "$pkgdir/etc/systemd/system/service.d/10-compat.conf"
+	install -d "$pkgdir/etc/systemd/system.conf.d"
+	cat << "EOF" > "$pkgdir/etc/systemd/system.conf.d/10-compat.conf"
+[Manager]
+DefaultEnvironment="LD_PRELOAD=/usr/lib/libsystemd-compat-4.19.so"
+EOF
+
+	# Early init wrapper and hardware watchdog petter daemon
+	install -Dm755 "$srcdir/init" "$pkgdir/usr/bin/init"
+	install -Dm755 "$srcdir/watchdog-petter.py" "$pkgdir/usr/bin/watchdog-petter.py"
+	install -Dm644 "$srcdir/watchdog-petter.service" "$pkgdir/usr/lib/systemd/system/watchdog-petter.service"
+	install -d "$pkgdir/usr/lib/systemd/system/sysinit.target.wants"
+	ln -s ../watchdog-petter.service "$pkgdir/usr/lib/systemd/system/sysinit.target.wants/watchdog-petter.service"
+
+	# Fallback telnetd rescue service
+	install -Dm644 "$srcdir/telnetd.service" "$pkgdir/usr/lib/systemd/system/telnetd.service"
+
+	# USB network setup & PMIC switch
 	install -Dm755 "$srcdir/setup-usb-network.sh" "$pkgdir/usr/bin/setup-usb-network.sh"
 	install -Dm755 "$srcdir/s2mu106-switch.py" "$pkgdir/usr/bin/s2mu106-switch.py"
 	install -Dm644 "$srcdir/s2mu106_working_state.json" "$pkgdir/etc/s2mu106_working_state.json"
 	install -Dm644 "$srcdir/usb-network.service" "$pkgdir/usr/lib/systemd/system/usb-network.service"
+
+	# S2MU106 battery management daemon
 	install -Dm755 "$srcdir/s2mu106-battery-manager.py" "$pkgdir/usr/bin/s2mu106-battery-manager.py"
 	install -d "$pkgdir/usr/bin"
 	ln -s s2mu106-battery-manager.py "$pkgdir/usr/bin/battery-status"
 	install -Dm644 "$srcdir/s2mu106-battery-manager.service" "$pkgdir/usr/lib/systemd/system/s2mu106-battery-manager.service"
+
+	# Multi-user enabled services
 	install -d "$pkgdir/usr/lib/systemd/system/multi-user.target.wants"
 	ln -s ../usb-network.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/usb-network.service"
 	ln -s ../s2mu106-battery-manager.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/s2mu106-battery-manager.service"
 
-	# Wi-Fi configuration and auto-init service
+	# Wi-Fi configuration, udev rule, and auto-init service
 	install -Dm644 "$srcdir/99-wifi.conf" "$pkgdir/etc/NetworkManager/conf.d/99-wifi.conf"
+	install -Dm644 "$srcdir/80-wifi.rules" "$pkgdir/etc/udev/rules.d/80-wifi.rules"
 	install -Dm644 "$srcdir/wlan0-init.service" "$pkgdir/usr/lib/systemd/system/wlan0-init.service"
 	ln -s ../wlan0-init.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/wlan0-init.service"
 
@@ -112,4 +152,11 @@ bb89222998b32bd817839162836349cea42efcd72e5a70a3d21f61ef5e3aef07bd9b33288f07b9f7
 1a28c7b1e8d20d53fa31d7c01213a903b07b1ba27e0c4b706a97b1f6e8a424727f1e709f6cd3d53b24a1745f9df6ab861fa844d79f4f70c76826e085f00870e4  99-wifi.conf
 33eb7650c9e607d07323e941e812af6f990094c862742de1d4603f8c9e95eff13250d2232b84be5bc20a5654f096d33fe4634ba41f554c684858ad6d57449519  wlan0-init.service
 ff34dc3e2efa4d32fbd44266bee9ecb5ae4d3049c03b46571b63d9647cad6ab71f6efcff6efb17da9c438fd5f02a0dbf28741969b5b1968b5d39cdf11704300a  00-allow-root.conf
+52caa343d89b2c1a3da7a05def3febe0d8b934feb35dbd98762aeb33d5bde6238bb051a37c8bb2a255886bb7939912a1f7e14b3e97937d65d475408554237461  telnetd.service
+8bb1f7950658a6d1328dac880daac75f47561262b6b6223920f9285c6e238069f5b3be5213ac939699c56e0a56c04d7da6a81ac2dce549babd219159cfeb02ff  80-wifi.rules
+b69677116f0b9d661f1f900d690cc7e9733a839941d7396d9f5444ef6c86834c169ba050699a5481201d006fba86594b87e0329d3b5b09aa54166871e0ef51d1  10-compat.conf
+7b96ade29479fe61f4776c472486fe992abbb453165d47891837e09792d56d7d6acd4e75188d436aed7ee2ca5103a4ea475ae363275578f84b088e64f3800772  compat.c
+1cef540dbd2bd2af2ccf97f7a6403e9273a7d1d7772cac06fc46b8ea6dadf4802d6c63d06770d773ce215c48c9de510937d06c42b0e2d0fe5398a6cc6c1d66da  init
+865e6855735315a371450c674cc1fd5c8a47449d9db695c103e8a6c46e96241a30b37bb8fbfd3335db0dc6236772d83fc01651506d28fdcc08f9d11f0c2035e4  watchdog-petter.py
+3b0aa9e3395bd6725119af1cd120f0fd08fc6f2bc54602157b9f5705ce90a9f96dad7be05e982d418335b2797fccc18cc294abb2629e38f01c3b49ac0f5723fe  watchdog-petter.service
 "

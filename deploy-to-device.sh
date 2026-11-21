@@ -36,6 +36,7 @@ EOF'
 echo "==> 3. Installing early init wrapper and watchdog petter..."
 cat "$SCRIPT_DIR/compat/init" | ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'cat > /usr/bin/init && chmod +x /usr/bin/init'
 cat "$SCRIPT_DIR/compat/watchdog-petter.py" | ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'cat > /usr/bin/watchdog-petter.py && chmod +x /usr/bin/watchdog-petter.py'
+cat "$SCRIPT_DIR/compat/watchdog-petter.service" | ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'cat > /usr/lib/systemd/system/watchdog-petter.service'
 
 echo "==> 4. Configuring /etc/fstab for storage stability..."
 cat "$SCRIPT_DIR/compat/fstab" | ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'cat > /etc/fstab'
@@ -55,7 +56,7 @@ EOF'
 cat "$SCRIPT_DIR/device-samsung-a21s/wlan0-init.service" | ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'cat > /etc/systemd/system/wlan0-init.service'
 
 echo "==> 7. Enabling system services..."
-ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'systemctl daemon-reload && systemctl enable s2mu106-battery-manager.service wlan0-init.service'
+ssh "${SSH_OPTS[@]}" "root@$TARGET_IP" 'systemctl daemon-reload && systemctl enable s2mu106-battery-manager.service wlan0-init.service watchdog-petter.service'
 
 echo "================================================================="
 echo " Installation Complete!"
