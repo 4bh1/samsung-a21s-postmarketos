@@ -32,10 +32,12 @@ REG_FG_RVBAT = 0x04    # 2 bytes: Battery Voltage
 REG_FG_RCUR_CC = 0x06  # 2 bytes: Battery Current (coulomb counter)
 REG_FG_RSOC = 0x08     # 2 bytes: Battery State of Charge
 
-REG_CHG_STATUS1 = 0x07 # 1 byte: Charger status (VBUS detection)
+REG_CHG_STATUS0 = 0x0E # 1 byte: WCIN & CHGIN status (VBUS detection)
+REG_CHG_STATUS1 = 0x0F # 1 byte: Charger fault status (bit 4: WD_SUSPEND)
 REG_CHG_CTRL0 = 0x18   # 1 byte: Charger Mode (bits 3:0)
 REG_CHG_CTRL1 = 0x19   # 1 byte: Input Current Limit
 REG_CHG_CTRL3 = 0x1B   # 1 byte: Fast Charge Current
+REG_CHG_CTRL12 = 0x24  # 1 byte: Watchdog timer control (bit 4: enable, bit 0: kick)
 
 # Hardware settings
 INPUT_CURRENT_2000MA = 0x73 # 2.0A input limit
@@ -123,26 +125,37 @@ class S2MU106:
 
     def kickstart_charging(self):
         """
-        Triggers rising edge (0x01 -> 0x03) on S2MU106 charger enable bit.
+        Triggers rising edge (0x01 -> 0x03) on S2MU106 charger enable bit
+        and clears watchdog timer suspend state.
         The S2MU106 state machine requires this transition to switch from
         Standby / Bypass idle into active Constant Current (CC) charging.
         """
+        try:
+            # Kick and disable watchdog
+            self.write_reg(ADDR_CHG, REG_CHG_CTRL12, 0x01)
+            self.write_reg(ADDR_CHG, REG_CHG_CTRL12, 0x00)
+        except Exception:
+            pass
         self.set_charger_mode(MODE_BUCK_ONLY)
         time.sleep(0.3)
         self.set_charger_mode(MODE_CHARGING)
 
     def get_charger_status(self):
         try:
-            st = self.read_regs(ADDR_CHG, REG_CHG_STATUS1, 5)
-            vbus_active = (st[0] != 0x00) or (st[1] != 0x00)
-            return vbus_active, st
+            st = self.read_regs(ADDR_CHG, REG_CHG_STATUS0, 6)
+            # st[0] is STATUS0 (0x0E): bits 2:0 are CHGIN status (5 = valid VBUS)
+            # st[1] is STATUS1 (0x0F): bits 7:4 are Fault status (1 = WD_SUSPEND, 2 = WD_RST)
+            vbus_active = (st[0] & 0x07) != 0
+            fault_wd = ((st[1] >> 4) & 0x0F) in [1, 2]
+            return vbus_active, fault_wd, st
         except Exception:
-            return False, []
+            return False, False, []
 
     def maintain_hardware(self, mode=MODE_CHARGING):
         """
         Actively maintains MUIC VBUS attach comparator, CCIC Type-C termination,
-        and Charger current limit registers so charging stays functional across replugs.
+        disables hardware charger watchdog timer, and maintains current limits
+        so charging stays functional across replugs and wall chargers.
         """
         # 1. Maintain MUIC attach detection (0x09 - 0x25)
         muic_regs = {
@@ -172,8 +185,14 @@ class S2MU106:
             except Exception:
                 pass
 
-        # 3. Maintain Charger limits and mode
+        # 3. Maintain Charger limits and mode, and keep watchdog disabled
         try:
+            # Check and disable hardware watchdog timer (reg 0x24)
+            cur_wdt = self.read_regs(ADDR_CHG, REG_CHG_CTRL12, 1)[0]
+            if cur_wdt != 0x00:
+                self.write_reg(ADDR_CHG, REG_CHG_CTRL12, 0x01) # kick
+                self.write_reg(ADDR_CHG, REG_CHG_CTRL12, 0x00) # disable
+
             cur_in = self.read_regs(ADDR_CHG, REG_CHG_CTRL1, 1)[0]
             if cur_in != INPUT_CURRENT_2000MA:
                 self.write_reg(ADDR_CHG, REG_CHG_CTRL1, INPUT_CURRENT_2000MA)
@@ -192,7 +211,7 @@ def get_status_dict(pmic):
     vbat = pmic.get_vbat_mv()
     curr = pmic.get_current_ma()
     mode, raw_ctrl0 = pmic.get_charger_mode()
-    vbus_ok, raw_status = pmic.get_charger_status()
+    vbus_ok, fault_wd, raw_status = pmic.get_charger_status()
 
     if mode == MODE_CHARGING:
         mode_str = "charging"
@@ -218,6 +237,7 @@ def get_status_dict(pmic):
         "mode": mode_str,
         "mode_raw": mode,
         "vbus_connected": vbus_ok,
+        "watchdog_suspended": fault_wd,
         "reg_ctrl0": hex(raw_ctrl0),
         "reg_status": [hex(b) for b in raw_status] if raw_status else [],
         "timestamp": int(time.time()),
@@ -272,11 +292,14 @@ def run_daemon(stop_pct=70.0, start_pct=50.0, poll_interval=15):
             # Maintain hardware registers and charging state continuously
             pmic.maintain_hardware(target_mode)
 
-            # If charging is intended and VBUS is present, but current is idling (< 25 mA),
-            # kickstart the CC charge state machine via edge trigger
-            if target_mode == MODE_CHARGING and status.get("vbus_connected") and status.get("current_ma", 0) < 25:
-                log("VBUS connected but charger in idle standby. Kickstarting CC charge cycle.")
-                pmic.kickstart_charging()
+            # If charging is intended, and either:
+            # - Charger watchdog timed out (fault_wd), OR
+            # - VBUS is present but charging is idling (< 25 mA)
+            # kickstart the CC charge state machine
+            if target_mode == MODE_CHARGING:
+                if status.get("watchdog_suspended") or (status.get("vbus_connected") and status.get("current_ma", 0) < 25):
+                    log("Kickstarting CC charging (clearing watchdog/idle standby).")
+                    pmic.kickstart_charging()
 
         except Exception as e:
             log(f"Error in monitor loop: {e}")

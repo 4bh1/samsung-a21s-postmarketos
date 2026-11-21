@@ -2,7 +2,7 @@
 maintainer="Thomas Turner <tturner@lineageos.org>"
 pkgname=device-samsung-a21s
 pkgver=1
-pkgrel=11
+pkgrel=17
 pkgdesc="Samsung Galaxy A21s"
 url="https://postmarketos.org"
 arch="aarch64"
@@ -10,19 +10,18 @@ license="MIT"
 depends="
 	android-tools-avbtool
 	android-tools-mkbootimg
+	busybox-extras
 	firmware-samsung-a21s
-	linux-postmarketos-exynos850
+	linux-samsung-a21s
+	openssh-server-pam
 	postmarketos-base
 	python3
 "
 makedepends="
-	android-tools-mkdtboimg
 	devicepkg-dev
-	dtc
 "
 source="
 	deviceinfo
-	exynos850-samsung-a21s-empty.dts
 	setup-usb-network.sh
 	s2mu106-switch.py
 	s2mu106_working_state.json
@@ -35,21 +34,20 @@ source="
 	a21s-display.py
 	10-unmanage-usb.conf
 	10-console.conf
+	99-wifi.conf
+	wlan0-init.service
+	00-allow-root.conf
 "
 subpackages="$pkgname-systemd"
 options="!archcheck !check"
 
 build() {
 	devicepkg_build $startdir $pkgname
-
-	dtc -O dtb -o "$srcdir/dtbo" -I dts "$srcdir/exynos850-samsung-a21s-empty.dts"
-	mkdtboimg create "$srcdir/dtbo.img" "$srcdir/dtbo" --custom0=0x6 --custom1=0x20
 }
 
 package() {
 	devicepkg_package $startdir $pkgname
 
-	install -Dm644 "$srcdir/dtbo.img" "$pkgdir/boot/dtbo.img"
 	install -Dm755 "$srcdir/setup-usb-network.sh" "$pkgdir/usr/bin/setup-usb-network.sh"
 	install -Dm755 "$srcdir/s2mu106-switch.py" "$pkgdir/usr/bin/s2mu106-switch.py"
 	install -Dm644 "$srcdir/s2mu106_working_state.json" "$pkgdir/etc/s2mu106_working_state.json"
@@ -61,6 +59,17 @@ package() {
 	install -d "$pkgdir/usr/lib/systemd/system/multi-user.target.wants"
 	ln -s ../usb-network.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/usb-network.service"
 	ln -s ../s2mu106-battery-manager.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/s2mu106-battery-manager.service"
+
+	# Wi-Fi configuration and auto-init service
+	install -Dm644 "$srcdir/99-wifi.conf" "$pkgdir/etc/NetworkManager/conf.d/99-wifi.conf"
+	install -Dm644 "$srcdir/wlan0-init.service" "$pkgdir/usr/lib/systemd/system/wlan0-init.service"
+	ln -s ../wlan0-init.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/wlan0-init.service"
+
+	# Install Wi-Fi firmware files if present
+	if [ -d "$startdir/wifi" ]; then
+		install -d "$pkgdir/vendor/etc/wifi"
+		cp -a "$startdir/wifi/"* "$pkgdir/vendor/etc/wifi/"
+	fi
 
 	# Screen-off power saver (installed, disabled by default on boot)
 	install -Dm755 "$srcdir/a21s-display.py" "$pkgdir/usr/bin/a21s-display"
@@ -74,6 +83,9 @@ package() {
 	# Systemd console logging
 	install -Dm644 "$srcdir/10-console.conf" "$pkgdir/etc/systemd/system.conf.d/10-console.conf"
 
+	# SSH root config
+	install -Dm644 "$srcdir/00-allow-root.conf" "$pkgdir/etc/ssh/sshd_config.d/00-allow-root.conf"
+
 	# Mask plymouth services to prevent boot crashes
 	install -d "$pkgdir/etc/systemd/system"
 	for u in plymouth-start.service plymouth-quit.service plymouth-quit-wait.service \
@@ -84,13 +96,12 @@ package() {
 }
 
 sha512sums="
-143d1bcc36a12eed1fb713389e49fd78e1ea55f75ace45a9254e865f7fa7c7f25ce6f8c9311824b61a6f4756afb2a6b73118583a17ab777863368e8ba7c93922  deviceinfo
-6e127e53f2380efad88b64d9720954ca633b4dace54afba29207afd210b0c43cf6fe6c636cfb9f14aa486bd6887da3b30f2a241d4a9244cd593639790c0c53b9  exynos850-samsung-a21s-empty.dts
+7167b3d439d920ef5920e826acd913c1237b2022a5198f7ed54daf015054a455dccaca242111d83dfbe7d6a10c30bd0d02be2e49481430aac6c7b99c0d66ff4b  deviceinfo
 a2e46ba5246fda297bcf8408af5fc5ec3933a2a0c3c2a3fb83e5fe7b9610fd0ef38929813933f18c938b204040969814cb50099e48911bfd769b3391ad092762  setup-usb-network.sh
-6c08055b68087797310103cd5b09b65472cfef1c1ec11c0edba1af85fff7e913e7195dc68c4e17f75aca8d5624dbc9a1c71242aada3a85ddb2046041068bdc83  s2mu106-switch.py
+8d08d11ae8ed48b1ce6810241af08e746ba29e18f1f74926a4e5548115405c92ac9cdaf789a3b4f5f4d1803bc9abc6ee01f3c602696d76e23f204e75d36e9e63  s2mu106-switch.py
 0ff311f13dd8eb5c649b3cf819282b31cbbc83d7e9d929af294142ff34b05f0565eea75895529e1c04f4365f6f504ad70defea7ea3a6243cda5ae0e5240407e9  s2mu106_working_state.json
 aebb04db5c53bd451c5bdac71099b1bd6967c17187911d210f87abc09bcfb113dbeccfa9c9648d7128acb52e6806590fb4e5684b6910842ae696083858f4e94a  usb-network.service
-70528ac5052ae2372fd405745ed3fc59121e30fda36066460b44f3327b5cd0205745399df3de1d295e01ac0799080014126a4ca605fc345dca2dc9ecdaa5a372  s2mu106-battery-manager.py
+7e1289c48632ed03dc32b2ccb125417ae0331208b5bed9e23cc6659e94fba0e050ad84481abd3d9b7377f5a042fd221832e05b39c4f95b5df3b6773e42ef8ca8  s2mu106-battery-manager.py
 6e52e064aee11465700b8803766b79372b7b9718923c9b72fa1be352706e9c7632a6999d43a67372d11fd799488d98bba175ce06d0cc4d323fb80aba7d94cf6e  s2mu106-battery-manager.service
 c6282d7ad074c4fe397e042b3cfc4825e71ddbf3a0b1654ee0ec9920f732963206298fb5838ff355b810586f6e4b8f4a36c99ca9556be0c7874038066caffa90  screen-off.sh
 223975977c351ba4380d88693c03839cacaf8a1bdf31cc8ac06189291cab6e6b80ef7d50d483d4d5491190bd413c3e52995787a46c882dcf577e63cf601ada51  screen-on.sh
@@ -98,4 +109,7 @@ c6282d7ad074c4fe397e042b3cfc4825e71ddbf3a0b1654ee0ec9920f732963206298fb5838ff355
 ccf92d7c3596fbdab092521799e8a6c32ef6e6edd664888f562e76f09e239234a8b30ba1b16a8120fefee3bc5df1bd7326b745a5e839f2bee1e00a2ffe01a913  a21s-display.py
 be5cdfcaba646dced79d9d80c3bd22ed55c1bf546ac07b9d453824034aad4b4e826477b1a13cfeb6e73b70dbbfd6aaac6de14e662574fb08647ae804ffb09943  10-unmanage-usb.conf
 bb89222998b32bd817839162836349cea42efcd72e5a70a3d21f61ef5e3aef07bd9b33288f07b9f7b5c40f2008863f5db2132ba3b2ef8a26e351c394829a736e  10-console.conf
+1a28c7b1e8d20d53fa31d7c01213a903b07b1ba27e0c4b706a97b1f6e8a424727f1e709f6cd3d53b24a1745f9df6ab861fa844d79f4f70c76826e085f00870e4  99-wifi.conf
+33eb7650c9e607d07323e941e812af6f990094c862742de1d4603f8c9e95eff13250d2232b84be5bc20a5654f096d33fe4634ba41f554c684858ad6d57449519  wlan0-init.service
+ff34dc3e2efa4d32fbd44266bee9ecb5ae4d3049c03b46571b63d9647cad6ab71f6efcff6efb17da9c438fd5f02a0dbf28741969b5b1968b5d39cdf11704300a  00-allow-root.conf
 "

@@ -1,0 +1,90 @@
+# Kernel config based on: arch/arm64/configs/exynos850-a21snsxx_defconfig
+maintainer="Thomas Turner <tturner@lineageos.org>"
+pkgname=linux-samsung-a21s
+pkgver=4.19.325
+pkgrel=2
+pkgdesc="Samsung Galaxy A21s downstream kernel fork (with native SCSC Wi-Fi)"
+arch="aarch64"
+_carch="arm64"
+_flavor="samsung-a21s"
+url="https://github.com/samsungexynos850/android_kernel_samsung_exynos850"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps
+	pmb:cross-native
+"
+makedepends="
+	android-tools-mkdtboimg
+	bash
+	bc
+	bison
+	clang
+	elfutils-dev
+	findutils
+	flex
+	linux-headers
+	lld
+	llvm
+	openssl-dev
+	perl
+	postmarketos-installkernel
+	python3
+"
+
+_repository="android_kernel_samsung_exynos850"
+_commit="b8c71b7aecece9c67f0e840a6b074573e8041d20"
+_config="config-$_flavor.$arch"
+
+# Source
+source="
+	$pkgname-$_commit.tar.gz::https://github.com/samsungexynos850/$_repository/archive/$_commit.tar.gz
+	$_config
+	a21s.cfg
+	0001-remove-werror.patch
+	0002-decon-fbops-dummy-ops.patch
+	0003-sec-hard-reset-disable-bug.patch
+"
+builddir="$srcdir/$_repository-$_commit"
+
+prepare() {
+	default_prepare
+	cp "$srcdir/$_config" .config
+}
+
+build() {
+	unset LDFLAGS
+	make ARCH="$_carch" LLVM=1 \
+		KCFLAGS="-Wno-error -Wno-sizeof-pointer-memaccess" \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1))-postmarketOS"
+}
+
+package() {
+	mkdir -p "$pkgdir"/boot/dtbs
+
+	# Base DTBs (packaged with custom1=0xff for Samsung bootloader)
+	for dtb_name in exynos3830 exynos850-a217f-3gb exynos850-a217f-4gb exynos850-a217f-6gb; do
+		mkdtboimg create "$pkgdir"/boot/dtbs/"${dtb_name}".dtb arch/arm64/boot/dts/exynos/exynos3830.dtb --custom1=0xff
+	done
+
+	# DTBO image
+	mkdtboimg cfg_create "$pkgdir"/boot/dtbo.img "$srcdir"/a21s.cfg -d arch/arm64/boot/dts/samsung/a21s
+
+	make install modules_install \
+		ARCH="$_carch" \
+		LLVM=1 \
+		INSTALL_PATH="$pkgdir"/boot \
+		INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+
+	install -Dm644 "$builddir"/include/config/kernel.release \
+		"$pkgdir"/usr/share/kernel/$_flavor/kernel.release
+}
+
+sha512sums="
+a415a54491ae5585ccc1fc924ed705058ed2a6ecee1a7591b7275442cd0686d176436713e7d57315c5bd7bde4b32b46aab31698e29da8157399c932c307eea52  linux-samsung-a21s-b8c71b7aecece9c67f0e840a6b074573e8041d20.tar.gz
+d4c2fc0fb318eb76998184cefcae41f084b118589b15567a3a47e2dcce5cc36d59fe79640a7170a55d3f89f5de82f8aa4434fdd61c363608c286f811984f08f0  config-samsung-a21s.aarch64
+a10e9286d93629b1a7d01eb9405693334b5bc5ff252f87823b295151c2af61705fe6ba52f1b2a266c9ce692a92e70d9f43c2c879a6c58a52c3cf737b89fdf0a2  a21s.cfg
+9374feef523aec69e35f4aa6242e0c3a865e14f24952d7b969fb983183474d2c882090e595575c6cd8bc5e515cf01101b057b0f3500b01fde85546f78bdcd9c7  0001-remove-werror.patch
+c1d9fc9735c1994896646b3ce2a3630410fd0f8942060212010f83241266da8fbf6db294af4688b1c4e851edd12ea16aa0669be913602fc630b7175f1aa7e62c  0002-decon-fbops-dummy-ops.patch
+3573732370de9cdf281ec8c36a60ea6e7e880022aa2cf120747d1a6284a83d045f348e3a4b2dcfbb42e3572eb1c23d7c824fa00033ed9989ea1e46fe3c2e8309  0003-sec-hard-reset-disable-bug.patch
+"

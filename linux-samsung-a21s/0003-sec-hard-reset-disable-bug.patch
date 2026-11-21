@@ -1,0 +1,10 @@
+--- a/drivers/samsung/sec_hard_reset_hook.c
++++ b/drivers/samsung/sec_hard_reset_hook.c
+@@ -158,7 +158,7 @@
+ 
+ 	pr_err("Hard Reset\n");
+ 	hard_reset_occurred = true;
+-	BUG();
++	return HRTIMER_NORESTART;
+ 	return HRTIMER_RESTART;
+ }

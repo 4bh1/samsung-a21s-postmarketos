@@ -1,0 +1,23 @@
+--- a/drivers/video/fbdev/exynos/dpu30/decon_core.c
++++ b/drivers/video/fbdev/exynos/dpu30/decon_core.c
+@@ -3687,6 +3687,10 @@
+ }
+ #endif
+ 
++static void decon_dummy_copyarea(struct fb_info *info, const struct fb_copyarea *area) {}
++static void decon_dummy_imageblit(struct fb_info *info, const struct fb_image *image) {}
++static int decon_dummy_cursor(struct fb_info *info, struct fb_cursor *cursor) { return 0; }
++
+ /* ---------- FREAMBUFFER INTERFACE ----------- */
+ static struct fb_ops decon_fb_ops = {
+ 	.owner		= THIS_MODULE,
+@@ -3695,6 +3699,9 @@
+ 	.fb_blank	= decon_blank,
+ 	.fb_setcolreg	= decon_setcolreg,
+ 	.fb_fillrect    = cfb_fillrect,
++	.fb_copyarea    = decon_dummy_copyarea,
++	.fb_imageblit   = decon_dummy_imageblit,
++	.fb_cursor      = decon_dummy_cursor,
+ #ifdef CONFIG_COMPAT
+ 	.fb_compat_ioctl = decon_compat_ioctl,
+ #endif

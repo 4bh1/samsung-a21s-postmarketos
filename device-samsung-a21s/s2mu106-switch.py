@@ -73,10 +73,14 @@ try:
 except Exception as e:
     log("Warning 0x3C enforce: " + str(e))
 
-# 0x3D: AP USB switch + Fast charging (2.0A input limit, 1.4A charge current)
+# 0x3D: AP USB switch + Fast charging (2.0A input limit, 1.4A charge current) + Watchdog disabled
 try:
     write_reg(0x3D, 0x19, 0x73) # 2.0A input current limit
     write_reg(0x3D, 0x1B, 0x38) # 1.4A fast charge current
+    write_reg(0x3D, 0x24, 0x01) # Kick charger watchdog
+    write_reg(0x3D, 0x24, 0x00) # Disable charger watchdog timer (prevents WD_SUSPEND)
+    write_reg(0x3D, 0x18, 0x01) # Charger toggle off
+    time.sleep(0.1)
     write_reg(0x3D, 0x18, 0x03) # Charging mode enabled
     write_reg(0x3D, 0x6D, 0x98) # CTRL1 manual
     write_reg(0x3D, 0x70, 0x77) # MANUAL_SW_CTRL: AP USB

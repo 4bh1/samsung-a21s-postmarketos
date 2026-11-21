@@ -1,97 +1,111 @@
-# Samsung Galaxy A21s (SM-A217F) — postmarketOS Headless & Hardware Fixes
+# Samsung Galaxy A21s (`SM-A217F`) — postmarketOS Systemd & Hardware Fixes
 
 > **Note:** This project is vibe coded with Google Antigravity.
 
-This repository provides device definitions, kernel patches, and power-management daemons for running [postmarketOS](https://postmarketos.org) on the **Samsung Galaxy A21s** (`SM-A217F` / `exynos850`) in a reliable, headless server configuration.
+This repository provides device packages, kernel patches, firmware blobs, and compatibility layers for running **postmarketOS** (`systemd-edge`, UI: `console`) on the **Samsung Galaxy A21s** (`SM-A217F` / `universal3830` / `exynos850`) as a high-reliability, 24/7 headless server or mobile workstation.
 
 ---
 
-## Key Features & Fixes
+## Hardware & Subsystem Status
 
-### 1. Boot Hang & D-Bus Deadlock Prevention
-- **Issue:** Early-boot `setup-usb-network.sh` calling `systemctl restart unudhcpd` synchronously caused a deadlock because it ran before `network.target` while `unudhcpd` depended on `network.target`.
-- **Fix:** Replaced blocking systemd transactions with direct background execution (`/usr/bin/unudhcpd ... &`), ensuring the USB CDC NCM gadget (`172.16.42.1`) boots cleanly without freezing system startup.
-- **Plymouth Masking:** Masked all `plymouth-*.service` units to `/dev/null` to eliminate switch-root segfaults.
-- **NetworkManager Isolation:** Configured `10-unmanage-usb.conf` so NetworkManager does not reset or interfere with the USB gadget interface.
+| Component | Status | Details |
+| :--- | :--- | :--- |
+| **Systemd 262** | **`running`** | Reached `multi-user.target` with **0 failed units** |
+| **Boot Speed** | **16.2s** | Kernel: 5.5s + Userspace: 10.7s |
+| **Wi-Fi** | **Working** | Dual-band 2.4 GHz & 5 GHz auto-scanning (`S5N2560`) |
+| **USB Networking** | **Working** | RNDIS / CDC-NCM gadget at `172.16.42.1` |
+| **SSH Server** | **Working** | Supervised natively under systemd port 22 |
+| **Battery Life / Health** | **Protected** | S2MU106 PMIC 50%–70% charge hysteresis (Buck-Only mode) |
+| **Watchdogs & Panics** | **Stabilized** | Hardware watchdog kickstarter + hung task panic disabled |
+| **Storage & Mounts** | **Working** | Native eMMC ext4 (`/dev/mmcblk0p37` root, `p33` boot) |
 
-### 2. Battery Protection & Swelling Prevention
-- **Daemon:** `s2mu106-battery-manager.service` runs continuously in the background monitoring State of Charge (SoC).
-- **Threshold Hysteresis:**
-  - **$\ge 70\%$ SoC:** Toggles S2MU106 PMIC register `0x18` (bits 3:0) into **Buck-Only mode (`0x01`)**. The phone runs entirely off USB power and suspends battery charging (0 mA current), preventing overheating and battery swelling.
-  - **$\le 50\%$ SoC:** Automatically resumes charging (**`0x03`**) until 70% is reached.
-- **Helper Tool:** Run `battery-status` (no `sudo` required) to view live battery voltage, current, state of charge, and PMIC register status:
-  ```bash
-  $ battery-status
-  === S2MU106 Battery Status ===
-  Level:         6.7%
-  Voltage:       3694 mV
-  Current:       16 mA (Charging)
-  Charger Mode:  charging (CTRL0: 0x3)
-  ```
+---
 
-### 3. Headless Console & Automated Screen-Off
-- **Target:** Default target set to `multi-user.target` (no Xorg, Wayland, or display managers).
-- **Power Saving:** `screen-off.service` powers off and blanks the LCD display panel immediately upon boot (`echo 4 > /sys/class/graphics/fb0/blank`).
-- **Control Scripts:**
-  - `screen-off`: Turns off and blanks the display panel.
-  - `screen-on`: Restores framebuffer and terminal display if physical inspection is required.
+## Quickstart (One-Click Installation)
 
-### 4. Mainline Kernel Patch
-- `0001-dwc3-force-gadget-softconnect.patch`:
-  - Registers S2MU106 MUIC I2C driver to route USB D+/D- lines to the application processor.
-  - Keeps DWC3 USB controller energized to ensure USB gadget softconnect survives cable re-plugging.
+If postmarketOS is already installed on your device and connected via USB (`172.16.42.1`):
+
+```bash
+git clone https://github.com/4bh1/samsung-a21s-postmarketos.git
+cd samsung-a21s-postmarketos
+chmod +x deploy-to-device.sh install.sh
+
+# Deploy all compatibility fixes, firmwares, and services directly:
+./deploy-to-device.sh 172.16.42.1
+
+# Reboot into the stable environment:
+ssh -F /dev/null root@172.16.42.1 'sync; reboot -f'
+```
+
+---
+
+## Technical Documentation
+
+Detailed architectural deep-dives and implementation details are provided in separate documentation guides:
+
+- 📖 [**Systemd 262 Compatibility Layer (`compat.c`)**](docs/systemd-compatibility.md): How we solved `-EUNATCH`, `AT_EMPTY_PATH` libc rejections, Netlink uevent socket downgrades, and guaranteed update survival.
+- 📡 [**S5N2560 Wi-Fi Bringup Guide**](docs/wifi-bringup.md): Extracting `mx140.bin` firmware from the Android `super` partition, bypassing kernel VFS restrictions, and disabling MAC randomization.
+- 🔋 [**Power Management & Watchdogs**](docs/power-and-watchdogs.md): S2MU106 PMIC register-level hysteresis, eliminating battery swelling with Buck-Only mode, and defeating watchdog resets.
+- 🛠️ [**Step-by-Step Installation Guide**](docs/installation-guide.md): Beginner-friendly instructions for flashing with `pmbootstrap` or patching live devices.
 
 ---
 
 ## Repository Structure
 
-```
+```text
 .
 ├── README.md
-├── install.sh
-├── device-samsung-a21s/
+├── install.sh                       # Copies packages to pmaports or triggers device deploy
+├── deploy-to-device.sh              # One-click SSH deployer for live phones
+├── boot-native.img                  # Verified native boot image for fastboot
+├── docs/
+│   ├── systemd-compatibility.md
+│   ├── wifi-bringup.md
+│   ├── power-and-watchdogs.md
+│   └── installation-guide.md
+├── compat/                          # Compatibility layer files
+│   ├── compat.c                     # LD_PRELOAD interceptor source code
+│   ├── libsystemd-compat-4.19.so    # Compiled aarch64 shared library
+│   ├── init                         # Early init handoff script
+│   ├── service-10-compat.conf       # Systemd service drop-in
+│   ├── fstab                        # Storage mount configuration
+│   └── watchdog-petter.py           # Dedicated watchdog daemon
+├── device-samsung-a21s/             # Device package for postmarketOS
 │   ├── APKBUILD
 │   ├── deviceinfo
-│   ├── setup-usb-network.sh
-│   ├── usb-network.service
-│   ├── s2mu106-battery-manager.py
+│   ├── 99-wifi.conf                 # NetworkManager Wi-Fi policy
+│   ├── wlan0-init.service           # Boot Wi-Fi initialization service
+│   ├── s2mu106-battery-manager.py   # Battery hysteresis daemon
 │   ├── s2mu106-battery-manager.service
-│   ├── s2mu106-switch.py
-│   ├── s2mu106_working_state.json
-│   ├── screen-off.sh
-│   ├── screen-on.sh
-│   ├── screen-off.service
-│   ├── 10-unmanage-usb.conf
-│   └── 10-console.conf
-└── linux-postmarketos-exynos850/
+│   └── wifi/                        # All 18 SCSC S5N2560 firmware & config files
+└── linux-samsung-a21s/              # Downstream Linux 4.19 kernel package
     ├── APKBUILD
-    ├── config-postmarketos-exynos850.aarch64
-    └── 0001-dwc3-force-gadget-softconnect.patch
+    ├── config-samsung-a21s.aarch64
+    ├── a21s.cfg
+    └── *.patch
 ```
 
 ---
 
-## Installation into `pmaports`
-
-Run `install.sh` to copy or symlink these packages into your local `pmaports` tree:
+## Helpful Commands On Device
 
 ```bash
-./install.sh /path/to/pmaports
-```
+# Check battery health & charging mode
+battery-status
 
-Or manually:
-```bash
-cp -r device-samsung-a21s ~/.local/var/pmbootstrap/cache_git/pmaports/device/testing/
-cp -r linux-postmarketos-exynos850 ~/.local/var/pmbootstrap/cache_git/pmaports/device/testing/
-```
+# Scan Wi-Fi networks
+nmcli device wifi list
 
-Then build or flash with `pmbootstrap`:
-```bash
-pmbootstrap build device-samsung-a21s
-pmbootstrap build linux-postmarketos-exynos850
+# Connect to Wi-Fi
+nmcli device wifi connect "SSID" password "PASSWORD"
+
+# Check overall system health
+systemctl is-system-running
+systemctl --failed
 ```
 
 ---
 
 ## License
+
 MIT / GPLv2 (for kernel patches).

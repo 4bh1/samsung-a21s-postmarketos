@@ -1,0 +1,9 @@
+# Private SSH Host Keys (prevents GitHub secret scanning rejection and security leak)
+device-samsung-a21s/ssh_host_*
+
+# Python caches and temporary files
+__pycache__/
+*.pyc
+*.swp
+*~
+.DS_Store

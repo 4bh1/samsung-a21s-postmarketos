@@ -1,0 +1,21 @@
+#!/bin/sh
+# 1. Mount API filesystems
+mount -t proc -o nosuid,noexec,nodev proc /proc 2>/dev/null || true
+mount -t sysfs -o nosuid,noexec,nodev sysfs /sys 2>/dev/null || true
+mount -t devtmpfs -o nosuid,mode=0755 devtmpfs /dev 2>/dev/null || true
+mount -t tmpfs -o nosuid,nodev,mode=0755 tmpfs /run 2>/dev/null || true
+mkdir -p /dev/pts /dev/shm /run/sshd
+mount -t devpts -o gid=5,mode=620 devpts /dev/pts 2>/dev/null || true
+
+# 2. Disable hung task panic immediately
+sysctl -w kernel.hung_task_panic=0 kernel.hung_task_timeout_secs=0 2>/dev/null || true
+
+# 3. Dedicated watchdog petter daemon
+/usr/bin/python3 /usr/bin/watchdog-petter.py </dev/null >/var/log/watchdog.log 2>&1 &
+
+# 4. Start early rescue telnet on port 23
+/usr/bin/busybox-extras telnetd -p 23 -l /bin/sh </dev/null >/dev/null 2>&1 &
+
+# 5. Hand off to systemd with compat library preloaded
+export LD_PRELOAD=/usr/lib/libsystemd-compat-4.19.so
+exec /usr/lib/systemd/systemd "$@"

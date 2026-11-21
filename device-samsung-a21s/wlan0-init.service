@@ -1,0 +1,13 @@
+[Unit]
+Description=Bring up wlan0 interface and integrate with NetworkManager
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/bin/sleep 2
+ExecStart=/bin/sh -c "/sbin/ip link set wlan0 up && /usr/bin/udevadm trigger --action=add /sys/class/net/wlan0 && /usr/bin/udevadm settle && /usr/bin/nmcli device set wlan0 managed yes"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+--- a/Makefile
++++ b/Makefile
+@@ -448,9 +448,9 @@
+ 		   -fno-strict-aliasing -fno-common -fshort-wchar \
+ 		   -std=gnu89 \
+ 		   -Werror-implicit-function-declaration \
+-		   -Werror \
+ 		   -Wstrict-prototypes \
+-		   -Werror=return-type -Wno-format-security
++		   -Werror=return-type -Wno-format-security \
++		   -Wno-sizeof-pointer-memaccess
+ KBUILD_CPPFLAGS := -D__KERNEL__
+ KBUILD_AFLAGS_KERNEL :=
+ KBUILD_CFLAGS_KERNEL :=
