@@ -1,0 +1,8 @@
+// Allow members of wheel, netdev, and plugdev groups to configure NetworkManager
+// without requiring an active local session (vital for headless / SSH remote sessions).
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") == 0 &&
+        (subject.isInGroup("wheel") || subject.isInGroup("netdev") || subject.isInGroup("plugdev"))) {
+        return polkit.Result.YES;
+    }
+});

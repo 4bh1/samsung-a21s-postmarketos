@@ -2,7 +2,7 @@
 maintainer="Thomas Turner <tturner@lineageos.org>"
 pkgname=device-samsung-a21s
 pkgver=1
-pkgrel=19
+pkgrel=20
 pkgdesc="Samsung Galaxy A21s"
 url="https://postmarketos.org"
 arch="aarch64"
@@ -48,6 +48,7 @@ source="
 	watchdog-petter.service
 	a21s-console-dashboard.py
 	a21s-console-dashboard.service
+	50-org.freedesktop.NetworkManager.rules
 "
 subpackages="$pkgname-systemd"
 options="!archcheck !check"
@@ -106,6 +107,9 @@ EOF
 	install -Dm644 "$srcdir/80-wifi.rules" "$pkgdir/etc/udev/rules.d/80-wifi.rules"
 	install -Dm644 "$srcdir/wlan0-init.service" "$pkgdir/usr/lib/systemd/system/wlan0-init.service"
 	ln -s ../wlan0-init.service "$pkgdir/usr/lib/systemd/system/multi-user.target.wants/wlan0-init.service"
+
+	# Polkit NetworkManager rules for unprivileged users (wheel, netdev, plugdev)
+	install -Dm644 "$srcdir/50-org.freedesktop.NetworkManager.rules" "$pkgdir/etc/polkit-1/rules.d/50-org.freedesktop.NetworkManager.rules"
 
 	# Install Wi-Fi firmware files if present
 	if [ -d "$startdir/wifi" ]; then
@@ -168,4 +172,5 @@ b69677116f0b9d661f1f900d690cc7e9733a839941d7396d9f5444ef6c86834c169ba050699a5481
 3b0aa9e3395bd6725119af1cd120f0fd08fc6f2bc54602157b9f5705ce90a9f96dad7be05e982d418335b2797fccc18cc294abb2629e38f01c3b49ac0f5723fe  watchdog-petter.service
 5b66639c20ce52b6e1a64e6952ca43f0bd3588a4de9ca83d698e0c5ae738014cfe7944c2b4a4dec739752aebd4c8ece0a78da0e935976a48f07ad69acb6b43e6  a21s-console-dashboard.py
 3c3615c7f0a1a2badf8b4d8b53c0ea436761fa1332b2a92fc0134fbd6625349792a29fd46e575de977da35c2b52befd4875375cbe4633835818841393eafccfb  a21s-console-dashboard.service
+3482e7a63d0e50cc84d40a5156e0435eec557c809950c2aec864b0c719df6b7a3d7540af8ac88693484de94840d1b3762bd533b1de9d586af1f38ea2afcaedd4  50-org.freedesktop.NetworkManager.rules
 "
