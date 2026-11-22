@@ -2,7 +2,7 @@
 maintainer="Thomas Turner <tturner@lineageos.org>"
 pkgname=device-samsung-a21s
 pkgver=1
-pkgrel=20
+pkgrel=21
 pkgdesc="Samsung Galaxy A21s"
 url="https://postmarketos.org"
 arch="aarch64"
@@ -49,6 +49,7 @@ source="
 	a21s-console-dashboard.py
 	a21s-console-dashboard.service
 	50-org.freedesktop.NetworkManager.rules
+	99-wlan-route.sh
 "
 subpackages="$pkgname-systemd"
 options="!archcheck !check"
@@ -110,6 +111,10 @@ EOF
 
 	# Polkit NetworkManager rules for unprivileged users (wheel, netdev, plugdev)
 	install -Dm644 "$srcdir/50-org.freedesktop.NetworkManager.rules" "$pkgdir/etc/polkit-1/rules.d/50-org.freedesktop.NetworkManager.rules"
+
+	# NetworkManager dispatcher script for automatic default route & subnet route
+	install -Dm755 "$srcdir/99-wlan-route.sh" "$pkgdir/etc/NetworkManager/dispatcher.d/99-wlan-route.sh"
+	install -Dm755 "$srcdir/99-wlan-route.sh" "$pkgdir/etc/NetworkManager/dispatcher.d/no-wait.d/99-wlan-route.sh"
 
 	# Install Wi-Fi firmware files if present
 	if [ -d "$startdir/wifi" ]; then
@@ -173,4 +178,5 @@ b69677116f0b9d661f1f900d690cc7e9733a839941d7396d9f5444ef6c86834c169ba050699a5481
 5b66639c20ce52b6e1a64e6952ca43f0bd3588a4de9ca83d698e0c5ae738014cfe7944c2b4a4dec739752aebd4c8ece0a78da0e935976a48f07ad69acb6b43e6  a21s-console-dashboard.py
 3c3615c7f0a1a2badf8b4d8b53c0ea436761fa1332b2a92fc0134fbd6625349792a29fd46e575de977da35c2b52befd4875375cbe4633835818841393eafccfb  a21s-console-dashboard.service
 3482e7a63d0e50cc84d40a5156e0435eec557c809950c2aec864b0c719df6b7a3d7540af8ac88693484de94840d1b3762bd533b1de9d586af1f38ea2afcaedd4  50-org.freedesktop.NetworkManager.rules
+341a9b95509b508aa04bcf90464f9ebd0b84ace9b71d50662e19647a2393aced1f7f31fb6ec206554b02a53ac1f5c11bb22b2ae5e11f9429e88bf3653a6873e3  99-wlan-route.sh
 "
